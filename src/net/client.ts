@@ -101,6 +101,11 @@ export class ClientSession {
     });
   }
 
+  /** This client's own PeerJS id — equals the host-stamped LobbyPlayer.peerId. */
+  get myPeerId(): string {
+    return this.peer?.id ?? '';
+  }
+
   private close(reason: string): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -145,9 +150,9 @@ export class ClientSession {
     }
   }
 
-  setLoadout(classId: ClassId, gun: GunId): void {
+  setLoadout(name: string, classId: ClassId, gun: GunId): void {
     this.classId = classId;
-    this.send({ t: 'loadout', classId, gun });
+    this.send({ t: 'loadout', name, classId, gun });
   }
 
   // -------------------------------------------------------------------------

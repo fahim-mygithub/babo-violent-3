@@ -6,7 +6,7 @@ import type { GameEvent, PlayerInput, Snapshot } from '../sim/types';
 import { emptyInput } from '../sim/types';
 import type { GameSim } from '../sim/sim';
 import {
-  MAX_PLAYERS, codeToPeerId, makeJoinCode,
+  MAX_PLAYERS, codeToPeerId, makeJoinCode, sanitizeName,
   type ClientMsg, type HostMsg, type LobbyPlayer, type MatchSettings,
 } from './types';
 
@@ -102,7 +102,7 @@ export class HostSession {
         }
         entry.lobby = {
           peerId: entry.conn.peer,
-          name: String(msg.name).slice(0, 18) || 'Babo',
+          name: sanitizeName(msg.name),
           classId: sanitizeClass(msg.classId),
           gun: sanitizeGun(msg.gun),
           isHost: false,
@@ -114,6 +114,7 @@ export class HostSession {
       }
       case 'loadout':
         if (entry.lobby) {
+          entry.lobby.name = sanitizeName(msg.name);
           entry.lobby.classId = sanitizeClass(msg.classId);
           entry.lobby.gun = sanitizeGun(msg.gun);
           this.broadcastLobby();
@@ -157,7 +158,8 @@ export class HostSession {
     this.onLobby();
   }
 
-  setLocalLoadout(classId: ClassId, gun: GunId): void {
+  setLocalLoadout(name: string, classId: ClassId, gun: GunId): void {
+    this.players[0].name = sanitizeName(name);
     this.players[0].classId = classId;
     this.players[0].gun = gun;
     this.broadcastLobby();

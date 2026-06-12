@@ -23,7 +23,7 @@ export interface MatchSettings {
 /** Client → host messages. */
 export type ClientMsg =
   | { t: 'hello'; name: string; classId: ClassId; gun: GunId }
-  | { t: 'loadout'; classId: ClassId; gun: GunId }
+  | { t: 'loadout'; name: string; classId: ClassId; gun: GunId }
   /** Redundant input window: the last ≤3 sampled inputs, newest last. */
   | { t: 'input'; inputs: PlayerInput[] };
 
@@ -38,6 +38,15 @@ export type HostMsg =
 
 export const MAX_PLAYERS = 8;
 export const PEER_ID_PREFIX = 'bv3-';
+
+/**
+ * Clamp a name (local or peer-supplied) to a safe, non-empty 18-char label.
+ * Shared by the host and the local app so both sides agree on the exact string
+ * (the client matches its own lobby row by the host-echoed name).
+ */
+export function sanitizeName(name: string): string {
+  return String(name).trim().slice(0, 18) || 'Babo';
+}
 
 /** Short human join code → full PeerJS id. */
 export function codeToPeerId(code: string): string {

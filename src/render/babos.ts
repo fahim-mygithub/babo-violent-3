@@ -1,100 +1,28 @@
 import * as THREE from 'three';
 import { C } from '../data/constants';
 import { CLASSES } from '../data/classes';
-import { GUNS } from '../data/weapons';
+import type { GunId } from '../data/weapons';
 import type { PlayerState } from '../sim/types';
-
-const UP = new THREE.Vector3(0, 1, 0);
+import { makeBaboMaterial } from './baboShader';
+import { buildGunModel, disposeGunModel } from './gunModels';
+import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboShapes';
 
 /**
  * Diegetic-health Babo: the sphere visibly fills with blood as it takes
- * damage, with a green→red rim glow. Body rolls with velocity; the eye shell
- * stays upright and tracks aim.
+ * damage, with a green→red rim glow. Body rolls with velocity; the aim mount
+ * stays upright and tracks aim, holding the gun's 3D model. Each chassis carries
+ * class-distinctive accessories (baboShapes.ts). Shader lives in baboShader.ts
+ * (shared with the lobby preview).
  */
-const baboVert = /* glsl */ `
-varying vec3 vNormal;
-varying vec3 vWorldPos;
-varying vec3 vLocal;
-void main() {
-  vNormal = normalize(mat3(modelMatrix) * normal);
-  vLocal = position;
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  vWorldPos = wp.xyz;
-  gl_Position = projectionMatrix * viewMatrix * wp;
-}
-`;
-
-const baboFrag = /* glsl */ `
-uniform vec3 uColor;
-uniform float uHp;       // 0..1
-uniform float uCenterY;  // babo world centre height
-uniform float uTime;
-uniform float uBlink;    // spawn invulnerability
-uniform float uBurn;
-uniform float uFortify;
-uniform float uOpacity;
-varying vec3 vNormal;
-varying vec3 vWorldPos;
-varying vec3 vLocal;
-
-void main() {
-  vec3 N = normalize(vNormal);
-  vec3 V = normalize(cameraPosition - vWorldPos);
-
-  // Blood fills from the bottom as hp drops, with a slosh wobble
-  float fill = 1.0 - uHp;
-  float level = -0.5 + fill + sin(vWorldPos.x * 7.0 + uTime * 5.0) * 0.035 * fill;
-  float h = vWorldPos.y - uCenterY; // -0.5..0.5 on the sphere
-  float isBlood = smoothstep(level + 0.03, level - 0.03, h);
-
-  vec3 shell = uColor;
-  // BV2-style globe grid etched into the shell — rolls with the ball, which
-  // is what makes the rolling readable (the original babos had no face).
-  vec3 lp = normalize(vLocal);
-  float lon = atan(lp.z, lp.x);
-  float lat = acos(clamp(lp.y, -1.0, 1.0));
-  float gridD = min(
-    abs(fract(lon * 6.0 / 6.2831853) - 0.5),
-    abs(fract(lat * 6.0 / 3.1415926) - 0.5)
-  );
-  float gridLine = smoothstep(0.085, 0.045, gridD);
-  shell = mix(shell, shell * 0.42, gridLine * 0.85);
-  shell = mix(shell, shell * 1.6 + vec3(0.18), uFortify * 0.6); // fortified sheen
-  vec3 blood = vec3(0.42, 0.012, 0.02);
-  // interior darkens as it fills (deeper pool)
-  blood *= 0.75 + 0.25 * (1.0 - fill);
-  vec3 base = mix(shell, blood, isBlood);
-
-  // Simple lighting: key directional + ambient
-  vec3 L = normalize(vec3(0.4, 1.0, 0.3));
-  float diff = max(dot(N, L), 0.0);
-  vec3 col = base * (0.45 + 0.62 * diff);
-
-  // Specular ball highlight
-  vec3 H = normalize(L + V);
-  col += vec3(1.0) * pow(max(dot(N, H), 0.0), 60.0) * 0.5;
-
-  // Health rim: green when healthy, red when hurt
-  float fres = pow(1.0 - max(dot(N, V), 0.0), 2.2);
-  vec3 rim = mix(vec3(0.9, 0.12, 0.05), vec3(0.15, 0.9, 0.25), uHp);
-  col += rim * fres * (0.55 + 0.45 * sin(uTime * 3.0) * (1.0 - uHp));
-
-  // Burning
-  col += vec3(1.0, 0.45, 0.05) * uBurn * (0.5 + 0.5 * sin(uTime * 24.0));
-  // Spawn blink
-  col = mix(col, vec3(1.0), uBlink);
-
-  gl_FragColor = vec4(col, uOpacity);
-}
-`;
-
 interface BaboVisual {
   group: THREE.Group;
   body: THREE.Mesh;
   mat: THREE.ShaderMaterial;
-  eyes: THREE.Group;
-  gun: THREE.Mesh;
-  gunMat: THREE.MeshStandardMaterial;
+  mount: THREE.Group;        // upright; yaws to aim, holds the gun model
+  gun: THREE.Group;
+  gunId: GunId;              // current held gun (rebuild the model on scavenge swap)
+  visual: ClassVisual;       // class-distinctive accessories
+  phased: boolean;           // last-applied Phantom phase fade state
   shadow: THREE.Mesh;
   marker: THREE.Mesh;      // bounty leader crown
   flagPole: THREE.Group;   // CTF carry indicator
@@ -125,6 +53,34 @@ function makeNameSprite(name: string): THREE.Sprite {
   return sprite;
 }
 
+/** Set transparent+opacity on every (opaque) material under an object — Phantom
+ *  phase fade for the held gun, restored cleanly when phase ends. */
+function setGroupOpacity(obj: THREE.Object3D, opacity: number): void {
+  obj.traverse((o) => {
+    const m = (o as THREE.Mesh).material;
+    const mats = Array.isArray(m) ? m : m ? [m] : [];
+    for (const mm of mats) {
+      mm.transparent = opacity < 1;
+      mm.opacity = opacity;
+    }
+  });
+}
+
+/** Recursively dispose geometries, materials and any material textures. */
+function disposeObject3D(obj: THREE.Object3D): void {
+  obj.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const m = mesh.material;
+    const mats = Array.isArray(m) ? m : m ? [m] : [];
+    for (const mm of mats) {
+      const tex = (mm as THREE.MeshBasicMaterial).map ?? (mm as THREE.SpriteMaterial).map;
+      if (tex) tex.dispose();
+      mm.dispose();
+    }
+  });
+}
+
 export class BaboPool {
   private visuals = new Map<number, BaboVisual>();
   private sphereGeo = new THREE.SphereGeometry(C.BABO_RADIUS, 28, 20);
@@ -139,34 +95,28 @@ export class BaboPool {
     const cls = CLASSES[p.classId];
     const group = new THREE.Group();
 
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: baboVert,
-      fragmentShader: baboFrag,
-      transparent: true,
-      uniforms: {
-        uColor: { value: new THREE.Color(cls.color) },
-        uHp: { value: 1 },
-        uCenterY: { value: C.BABO_RADIUS },
-        uTime: { value: 0 },
-        uBlink: { value: 0 },
-        uBurn: { value: 0 },
-        uFortify: { value: 0 },
-        uOpacity: { value: 1 },
-      },
-    });
+    // Class-distinctive accessories + cosmetic body scale (baboShapes.ts).
+    const visual = buildClassVisual(p.classId, C.BABO_RADIUS);
+    const mat = makeBaboMaterial(cls.color, C.BABO_RADIUS, C.BABO_RADIUS * visual.bodyScale);
     const body = new THREE.Mesh(this.sphereGeo, mat);
+    body.scale.setScalar(visual.bodyScale);
     group.add(body);
+    for (const o of visual.roll) body.add(o);     // tumble with the ball (inherits bodyScale)
+    // Upright bits ride a bodyScale wrapper so they track the scaled shell too.
+    const uprightHolder = new THREE.Group();
+    uprightHolder.scale.setScalar(visual.bodyScale);
+    for (const o of visual.upright) uprightHolder.add(o);
+    group.add(uprightHolder);
 
     // Aim mount: upright group that yaws to aim while the ball rolls under it.
     // True to BV2, the babo has no face — the held gun is the only oriented part.
-    const eyes = new THREE.Group();
-    group.add(eyes);
+    const mount = new THREE.Group();
+    group.add(mount);
 
-    // Held gun: a stubby barrel pointing along aim
-    const gunMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.4, metalness: 0.6 });
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.13, 0.13), gunMat);
-    gun.position.set(0.55, 0.05, 0);
-    eyes.add(gun);
+    // Held gun: a distinct 3D model per weapon, muzzle along aim (+X).
+    const gun = buildGunModel(p.gun);
+    gun.position.set(0.45, 0.06, 0);
+    mount.add(gun);
 
     const shadow = new THREE.Mesh(this.shadowGeo, this.shadowMat);
     shadow.rotation.x = -Math.PI / 2;
@@ -204,7 +154,10 @@ export class BaboPool {
     group.add(nameTag);
 
     this.scene.add(group);
-    const vis: BaboVisual = { group, body, mat, eyes, gun, gunMat, shadow, marker, flagPole, nameTag };
+    const vis: BaboVisual = {
+      group, body, mat, mount, gun, gunId: p.gun, visual, phased: false,
+      shadow, marker, flagPole, nameTag,
+    };
     this.visuals.set(p.id, vis);
     return vis;
   }
@@ -227,8 +180,22 @@ export class BaboPool {
         vis.body.quaternion.premultiply(this.tmpQuat);
       }
 
-      // Eyes + gun face aim (sim aim angle → XZ yaw)
-      vis.eyes.rotation.y = -p.aim;
+      // Aim mount + gun face aim (sim aim angle → XZ yaw)
+      vis.mount.rotation.y = -p.aim;
+
+      // Scavenge swap: rebuild the held model when the carried gun changes.
+      if (p.gun !== vis.gunId) {
+        vis.mount.remove(vis.gun);
+        disposeGunModel(vis.gun);
+        vis.gun = buildGunModel(p.gun);
+        vis.gun.position.set(0.45, 0.06, 0);
+        vis.mount.add(vis.gun);
+        vis.gunId = p.gun;
+        if (vis.phased) setGroupOpacity(vis.gun, 0.32); // keep a mid-phase swap ghostly
+      }
+
+      // Class accessory animation (orbiting rings, hovering wisps, …)
+      vis.visual.animate?.(vis.visual.upright, time);
 
       const u = vis.mat.uniforms;
       u.uHp.value = Math.max(0, p.hp) / C.MAX_HP;
@@ -239,7 +206,13 @@ export class BaboPool {
       u.uFortify.value = p.fortifyActive ? 1 : 0;
       u.uOpacity.value = p.phaseActive ? 0.32 : 1;
 
-      vis.gunMat.color.setHex(GUNS[p.gun].color);
+      // Phase Shift fades the body shader; fade the held gun to match so it
+      // doesn't float opaque beside a ghost body. Toggle only on transition.
+      if (p.phaseActive !== vis.phased) {
+        vis.phased = p.phaseActive;
+        setGroupOpacity(vis.gun, p.phaseActive ? 0.32 : 1);
+      }
+
       vis.marker.visible = p.id === leaderId;
       if (vis.marker.visible) vis.marker.rotation.y = time * 2;
       vis.flagPole.visible = p.carryingFlag !== -1;
@@ -252,9 +225,31 @@ export class BaboPool {
     for (const [id, vis] of this.visuals) {
       if (!seen.has(id)) {
         this.scene.remove(vis.group);
-        vis.mat.dispose();
+        this.disposeVisual(vis);
         this.visuals.delete(id);
       }
     }
+  }
+
+  /** Dispose one babo's per-instance geometries/materials (not pool-shared ones). */
+  private disposeVisual(vis: BaboVisual): void {
+    vis.mat.dispose();
+    disposeGunModel(vis.gun);
+    disposeClassVisual(vis.visual);
+    disposeObject3D(vis.marker);
+    disposeObject3D(vis.flagPole);
+    disposeObject3D(vis.nameTag);
+  }
+
+  /** Tear down every babo + the pool-shared geometries/material. */
+  dispose(): void {
+    for (const vis of this.visuals.values()) {
+      this.scene.remove(vis.group);
+      this.disposeVisual(vis);
+    }
+    this.visuals.clear();
+    this.sphereGeo.dispose();
+    this.shadowGeo.dispose();
+    this.shadowMat.dispose();
   }
 }

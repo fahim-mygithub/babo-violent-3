@@ -51,3 +51,17 @@ Per `docs/RUBRIC.md`, every deviation from
     one leaves it on the pad (the spec's anti-accidental-loss rationale, extended).
 18. **High Bounty heat persists through ordinary deaths** (fixed to match spec §6.3:
     only killing the *Leader* resets their heat).
+
+## Lobby loadout showcase (2026-06-12)
+
+19. **Animated lobby showcase + editable name + weapon models.** Beyond the spec's
+    static lobby, the lobby now renders a live 3D hero preview of the selected Babo
+    (own WebGL context, turntable + aim sweep) that periodically *demonstrates the
+    chosen class ability* (grapple/dash/fortify/phase/gravity-well) with a caption,
+    plus an editable Babo name (synced over the `loadout` net message), distinct
+    procedural 3D models + 2D silhouette icons for all 8 guns (held in-match too),
+    and class-distinctive chassis accessories (legs / armor belt / shield ring /
+    ethereal wisps / orbiting satellites) keyed off mass and ability. All procedural
+    — zero added binary assets, preserving the GitHub Pages "no runtime downloads"
+    constraint. The babo shader was extracted to `render/baboShader.ts` so the
+    preview and the in-match babos read identically.

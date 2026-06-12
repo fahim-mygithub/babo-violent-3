@@ -247,7 +247,9 @@ export class GameRenderer {
   dispose(): void {
     window.removeEventListener('resize', this.onResize);
     this.splat.dispose();
+    this.babos.dispose();
     this.renderer.dispose();
+    this.renderer.forceContextLoss(); // release the GL context now, don't wait for GC
     this.canvas.remove();
   }
 }

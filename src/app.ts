@@ -8,12 +8,13 @@ import { emptyInput, type GameEvent, type ModeId, type PlayerState } from './sim
 import { GameRenderer, type WorldView } from './render/renderer';
 import { Hud } from './render/hud';
 import { ScreenFx } from './render/screenfx';
+import { LobbyPreview } from './render/lobbyPreview';
 import { InputManager } from './input';
 import { AudioEngine } from './audio/audio';
 import { UI, type LobbyConfig, type LobbyViewPlayer } from './ui/screens';
 import { HostSession } from './net/host';
 import { ClientSession } from './net/client';
-import type { MatchSettings } from './net/types';
+import { sanitizeName, type MatchSettings } from './net/types';
 
 type Role = 'local' | 'host' | 'client';
 
@@ -37,6 +38,10 @@ export class App {
   private cfg: LobbyConfig = { mode: 'tdm', botCount: 5, scoreLimit: defaultScore('tdm') };
   private host: HostSession | null = null;
   private client: ClientSession | null = null;
+
+  // Animated lobby showcase (persists across lobby re-renders; re-parented each time)
+  private lobbyPreview: LobbyPreview | null = null;
+  private previewCanvas: HTMLCanvasElement | null = null;
 
   // Match state
   private role: Role = 'local';
@@ -74,6 +79,7 @@ export class App {
   private showMenu(): void {
     this.teardownMatch();
     this.disposeNet();
+    this.disposeLobbyPreview();
     this.ui.showMenu({
       onPractice: () => this.showLocalLobby(),
       onHost: () => this.startHosting(),
@@ -94,8 +100,51 @@ export class App {
   }
 
   private syncLoadout(): void {
-    this.host?.setLocalLoadout(this.classId, this.gunId);
-    this.client?.setLoadout(this.classId, this.gunId);
+    this.host?.setLocalLoadout(this.playerName, this.classId, this.gunId);
+    this.client?.setLoadout(this.playerName, this.classId, this.gunId);
+  }
+
+  /** Commit an edited babo name (from the lobby), persist it, and sync to peers. */
+  private setName(name: string): void {
+    const n = sanitizeName(name); // same rule the host applies, so client isYou stays stable
+    this.playerName = n;
+    localStorage.setItem(NAME_KEY, n);
+    this.syncLoadout();
+  }
+
+  /**
+   * Mount the persistent animated showcase into the freshly-rendered lobby. The
+   * lobby DOM is rebuilt on every pick, so the WebGL canvas is created once and
+   * re-parented into each new `#preview-slot` rather than recreated (which would
+   * leak GL contexts and flicker).
+   */
+  private mountLobbyPreview(): void {
+    const slot = this.container.querySelector('#preview-slot');
+    if (!slot) return;
+    if (!this.lobbyPreview || !this.previewCanvas) {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'preview-canvas';
+      this.previewCanvas = canvas;
+      this.lobbyPreview = new LobbyPreview(canvas);
+      this.lobbyPreview.onCaption = (txt) => {
+        const cap = document.getElementById('demo-caption');
+        if (cap) {
+          cap.textContent = txt ? `▶ ${txt}` : '';
+          cap.classList.toggle('on', !!txt);
+        }
+      };
+      this.lobbyPreview.start();
+    }
+    slot.insertBefore(this.previewCanvas, slot.firstChild);
+    this.lobbyPreview.setLoadout(this.classId, this.gunId);
+    this.lobbyPreview.resize();
+  }
+
+  private disposeLobbyPreview(): void {
+    this.lobbyPreview?.dispose();
+    this.previewCanvas?.remove();
+    this.lobbyPreview = null;
+    this.previewCanvas = null;
   }
 
   private showLocalLobby(): void {
@@ -110,6 +159,7 @@ export class App {
     }
     this.ui.showLobby({
       title: 'PRACTICE',
+      name: this.playerName,
       players: [
         { name: this.playerName, classId: this.classId, gun: this.gunId, team: this.cfg.mode === 'bounty' ? -1 : 0, isYou: true, isHost: true },
         ...bots,
@@ -122,6 +172,7 @@ export class App {
       cb: {
         onClassPick: (id) => { this.pickClass(id); this.showLocalLobby(); },
         onGunPick: (id) => { this.pickGun(id); this.showLocalLobby(); },
+        onNameChange: (name) => this.setName(name),
         onConfigChange: (cfg) => {
           const modeChanged = cfg.mode !== this.cfg.mode;
           this.cfg = cfg;
@@ -132,6 +183,7 @@ export class App {
         onLeave: () => this.showMenu(),
       },
     });
+    this.mountLobbyPreview();
   }
 
   private async startHosting(): Promise<void> {
@@ -168,6 +220,7 @@ export class App {
     this.ui.showLobby({
       title: 'HOST GAME',
       code: host.code,
+      name: this.playerName,
       players: [
         ...host.players.map((p, i) => ({
           name: p.name, classId: p.classId, gun: p.gun,
@@ -182,19 +235,22 @@ export class App {
       isHost: true,
       canConfigure: true,
       cb: {
-        onClassPick: (id) => { this.pickClass(id); this.showHostLobby(); },
-        onGunPick: (id) => { this.pickGun(id); this.showHostLobby(); },
+        // host.onLobby (= showHostLobby) re-renders via broadcastLobby, so these
+        // must NOT also call showHostLobby() inline or the lobby rebuilds twice.
+        onClassPick: (id) => this.pickClass(id),
+        onGunPick: (id) => this.pickGun(id),
+        onNameChange: (name) => this.setName(name),
         onConfigChange: (cfg) => {
           host.updateSettings({
             mode: cfg.mode, botCount: cfg.botCount,
             scoreLimit: cfg.mode !== host.settings.mode ? defaultScore(cfg.mode) : cfg.scoreLimit,
           });
-          this.showHostLobby();
         },
         onStart: () => this.launchHostMatch(),
         onLeave: () => this.showMenu(),
       },
     });
+    this.mountLobbyPreview();
   }
 
   private async joinGame(code: string): Promise<void> {
@@ -221,10 +277,12 @@ export class App {
     const s = client.settings;
     this.ui.showLobby({
       title: 'LOBBY',
+      name: this.playerName,
       players: client.players.map((p, i) => ({
         name: p.name, classId: p.classId, gun: p.gun,
         team: s.mode === 'bounty' ? -1 : i % 2,
-        isHost: p.isHost, isYou: !p.isHost && p.name === this.playerName, bot: p.bot,
+        // Identify our own row by peer id, not name (names are editable/duplicable).
+        isHost: p.isHost, isYou: !p.isHost && p.peerId === client.myPeerId, bot: p.bot,
       })),
       cfg: { mode: s.mode, botCount: s.botCount, scoreLimit: s.scoreLimit },
       selectedClass: this.classId,
@@ -234,11 +292,13 @@ export class App {
       cb: {
         onClassPick: (id) => { this.pickClass(id); this.showClientLobby(); },
         onGunPick: (id) => { this.pickGun(id); this.showClientLobby(); },
+        onNameChange: (name) => this.setName(name),
         onConfigChange: () => {},
         onStart: () => {},
         onLeave: () => this.showMenu(),
       },
     });
+    this.mountLobbyPreview();
   }
 
   // ---------------------------------------------------------------------------
@@ -313,6 +373,7 @@ export class App {
 
   private enterMatch(mapId: string): void {
     this.ui.hide();
+    this.disposeLobbyPreview();
     this.input.enabled = true;
     this.endTimer = -1;
     document.body.style.cursor = 'none';

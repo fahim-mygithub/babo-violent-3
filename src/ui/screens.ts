@@ -1,6 +1,22 @@
 import { ALL_CLASS_IDS, CLASSES, type ClassId } from '../data/classes';
 import { ALL_GUN_IDS, GUNS, type GunId } from '../data/weapons';
 import type { ModeId, PlayerState } from '../sim/types';
+import { makeGunIcon } from '../render/gunModels';
+
+/** One-line "how this chassis plays" blurb for the showcase panel. */
+const CLASS_TIPS: Record<ClassId, string> = {
+  spider: 'Light and fast. Grapple a wall and slingshot around cover to flank — recoil barely nudges you.',
+  juggernaut: 'A rolling wrecking ball. Heavy and hard to shove; Pinball Dash turns you into a lethal projectile.',
+  bastion: 'Hold the line. Fortify makes you immovable — shrug off recoil, knockback and pulls while you trade fire.',
+  phantom: 'Glass-cannon ghost. Phase through bodies and bullets to slip in, delete a target, and vanish.',
+  trapper: 'Zone control. Drop a Gravity Well to drag enemies into your crossfire — or onto a live grenade.',
+};
+
+/** Escape user-controlled text before it goes into innerHTML / attributes. */
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
 
 export interface LobbyViewPlayer {
   name: string;
@@ -27,6 +43,8 @@ export interface MenuCallbacks {
 export interface LobbyCallbacks {
   onClassPick: (id: ClassId) => void;
   onGunPick: (id: GunId) => void;
+  /** Committed name (fired on blur / Enter). */
+  onNameChange: (name: string) => void;
   onConfigChange: (cfg: LobbyConfig) => void;
   onStart: () => void;
   onLeave: () => void;
@@ -132,6 +150,7 @@ export class UI {
   showLobby(opts: {
     title: string;
     code?: string;
+    name: string;
     players: LobbyViewPlayer[];
     cfg: LobbyConfig;
     selectedClass: ClassId;
@@ -140,7 +159,7 @@ export class UI {
     canConfigure: boolean;
     cb: LobbyCallbacks;
   }): void {
-    const { players, cfg, selectedClass, selectedGun, isHost, canConfigure, cb } = opts;
+    const { name, players, cfg, selectedClass, selectedGun, isHost, canConfigure, cb } = opts;
     const el = document.createElement('div');
     el.className = 'screen';
 
@@ -148,18 +167,21 @@ export class UI {
       const c = CLASSES[id];
       const col = '#' + c.color.toString(16).padStart(6, '0');
       return `
-        <div class="class-card ${id === selectedClass ? 'sel' : ''}" data-class="${id}">
+        <div class="class-card ${id === selectedClass ? 'sel' : ''}" data-class="${id}" title="${c.role}">
           <div class="ball" style="background: radial-gradient(circle at 35% 30%, ${col}, #16181d 90%)"></div>
           <div class="cname">${c.name}</div>
-          <div class="crole">${c.role}</div>
         </div>`;
     }).join('');
 
     const sel = CLASSES[selectedClass];
     const maxMass = 5, maxSpeed = 18;
     const detail = `
+      <div class="showcase-head">
+        <span class="sc-name">${sel.name}</span><span class="role-pill">${sel.role}</span>
+      </div>
       <div class="class-detail">
-        <b>${sel.name}</b> — <span class="ab">${sel.ability.name}</span>: ${sel.ability.description}
+        <span class="ab">${sel.ability.name}</span> — ${sel.ability.description}
+        <div class="tip">${CLASS_TIPS[selectedClass]}</div>
         <div class="stat-bars">
           <div class="sb"><label>Speed</label><div class="bar"><i style="width:${(sel.maxSpeed / maxSpeed) * 100}%"></i></div></div>
           <div class="sb"><label>Mass</label><div class="bar"><i style="width:${(sel.mass / maxMass) * 100}%"></i></div></div>
@@ -170,23 +192,28 @@ export class UI {
     const gun = GUNS[selectedGun];
     const gunChips = ALL_GUN_IDS.map((id) => {
       const g = GUNS[id];
-      const col = '#' + g.color.toString(16).padStart(6, '0');
       return `
         <div class="gun-chip ${id === selectedGun ? 'sel' : ''}" data-gun="${id}" title="${g.identity}">
-          <span class="dot" style="background:${col}"></span>${g.name}
+          <span class="gun-ico-wrap"></span><span class="gun-name">${g.name}</span>
         </div>`;
     }).join('');
+    const gunMeta = gun.sustain === 'reload'
+      ? `mag ${gun.magSize} · reload ${gun.reloadTime}s`
+      : `heat${gun.chargeTime ? ' · charge' : ''}${gun.spinUp ? ' · spin-up' : ''}`;
     const gunDetail = `
-      <div class="class-detail" style="min-height:20px;margin-top:8px">
-        <b>${gun.name}</b> — ${gun.identity} ·
-        ${gun.sustain === 'reload' ? `mag ${gun.magSize}` : 'heat'} · recoil ${gun.recoil}
+      <div class="gun-detail">
+        <b>${gun.name}</b> — ${gun.identity}
+        <div class="gun-stats"><span>${gunMeta}</span><span>recoil ${gun.recoil}</span><span>range ${gun.range}</span></div>
       </div>`;
 
-    const rows = players.map((p) => `
+    const rows = players.map((p) => {
+      const nm = p.isYou ? `▸ <span id="you-name">${esc(p.name)}</span>` : esc(p.name);
+      return `
       <div class="player-row ${p.team === 0 ? 't0' : p.team === 1 ? 't1' : 'ffa'}">
-        <span>${p.isYou ? '▸ ' : ''}${p.name}${p.bot ? ' <span class="tag">BOT</span>' : ''}</span>
+        <span>${nm}${p.bot ? ' <span class="tag">BOT</span>' : ''}</span>
         <span class="tag">${CLASSES[p.classId].name}${p.gun ? ' · ' + GUNS[p.gun].name : ''}${p.isHost ? ' · HOST' : ''}</span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
 
     const codeBlock = opts.code
       ? `<h3>Join code — click to copy</h3><div class="join-code" id="code">${opts.code}</div>
@@ -212,20 +239,28 @@ export class UI {
     el.innerHTML = `
       <div class="title" style="font-size:30px">${opts.title}</div>
       <div class="lobby">
-        <div class="panel">
-          <h3>Pick your chassis</h3>
+        <div class="panel pickers">
+          <h3>Your babo</h3>
+          <input class="field name-field" id="name-input" maxlength="18" spellcheck="false"
+                 placeholder="NAME" value="${esc(name)}">
+          <h3 style="margin-top:16px">Chassis</h3>
           <div class="class-grid">${classCards}</div>
-          ${detail}
-          <h3 style="margin-top:14px">Pick your gun</h3>
+          <h3 style="margin-top:16px">Weapon</h3>
           <div class="gun-row">${gunChips}</div>
+        </div>
+        <div class="panel showcase">
+          <div class="preview-stage" id="preview-slot">
+            <div class="demo-caption" id="demo-caption"></div>
+          </div>
+          ${detail}
           ${gunDetail}
         </div>
-        <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="match-col">
           <div class="panel">${codeBlock}
             <h3 style="margin-top:${opts.code ? '14px' : '0'}">Match</h3>
             ${configBlock}
           </div>
-          <div class="panel" style="flex:1">
+          <div class="panel players-panel">
             <h3>Players (${players.length})</h3>
             <div class="player-list">${rows}</div>
           </div>
@@ -242,8 +277,27 @@ export class UI {
       card.addEventListener('click', () => cb.onClassPick((card as HTMLElement).dataset.class as ClassId));
     });
     el.querySelectorAll('.gun-chip').forEach((chip) => {
-      chip.addEventListener('click', () => cb.onGunPick((chip as HTMLElement).dataset.gun as GunId));
+      const id = (chip as HTMLElement).dataset.gun as GunId;
+      const wrap = chip.querySelector('.gun-ico-wrap');
+      if (wrap) {
+        const ico = makeGunIcon(id);
+        ico.className = 'gun-ico';
+        wrap.appendChild(ico);
+      }
+      chip.addEventListener('click', () => cb.onGunPick(id));
     });
+
+    // Name editor: live-update the local row as you type; commit on blur / Enter.
+    const nameInput = el.querySelector('#name-input') as HTMLInputElement;
+    nameInput.addEventListener('input', () => {
+      const you = el.querySelector('#you-name');
+      if (you) you.textContent = nameInput.value || 'Babo';
+    });
+    nameInput.addEventListener('change', () => cb.onNameChange(nameInput.value));
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') nameInput.blur();
+    });
+
     el.querySelector('#code')?.addEventListener('click', () => {
       navigator.clipboard?.writeText(opts.code!);
       this.toast('Code copied');

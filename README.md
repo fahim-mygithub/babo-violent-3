@@ -21,6 +21,11 @@ npm run dev        # http://localhost:5173
 - **Host game** — opens a lobby with a 6-letter join code; share it with friends.
 - **Join** — paste a code, pick your class, wait for the host to start.
 
+In the lobby you **name your Babo, pick a chassis and a weapon**, with a live animated
+3D preview: your Babo turns on a pedestal and demonstrates its class ability (grapple,
+dash, fortify, phase, gravity well) so you can see exactly how each one plays. Every
+chassis is visually distinct, and each of the 8 guns has its own model + selector icon.
+
 ## Controls
 
 | Action | Bind |

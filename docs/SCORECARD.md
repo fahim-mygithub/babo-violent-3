@@ -113,3 +113,27 @@ share in FFA; match pacing ~10 kills/min in 8-bot TDM (healthy 4–12 band). Gun
 spread acceptable; bots can operate charge/spin guns.
 
 All 94 tests pass post-fix; the suite gained a slick-cap overflow test (C2 → **P**).
+
+---
+
+## Lobby & visual enhancement pass (2026-06-12)
+
+Post-ship polish: an **animated 3D lobby showcase** (turntable Babo on a pedestal that
+demonstrates the selected class ability with a caption), an **editable Babo name**
+(persisted + synced over the net `loadout` message), **distinct procedural gun models**
++ 2D selector icons for all 8 guns (also held in-match, replacing the placeholder box),
+and **class-distinctive chassis accessories** so all five Babos read apart at a glance
+(F14 / design fidelity strengthened). New render modules: `baboShader.ts` (shared
+shader), `gunModels.ts`, `baboShapes.ts`, `lobbyPreview.ts`. Still zero binary assets
+(S4 holds) — geometry from primitives, icons from canvas.
+
+Reviewed by a 4-dimension adversarial workflow (13 agents: resource/lifecycle,
+state/net, render/visual, regression). **9 minor findings, all fixed:** deterministic
+GL-context release (`forceContextLoss`), a `BaboPool.dispose()` teardown, duplicate-name-
+proof client `isYou` (peer id, not name), one shared name sanitizer, removal of a host
+double-render, a far more legible Spider, Phantom phase now fades the held gun too,
+preview blood-fill `uRadius` tracks body scale, and upright accessories track the scaled
+shell. Also fixed a build bug where the *default* class's preview rendered without its
+accessories/ability demo. 94 tests still pass; typecheck + production build clean;
+browser-verified (all five classes + eight guns distinct, every ability demo plays,
+name edit persists, in-match models render, zero console errors).
