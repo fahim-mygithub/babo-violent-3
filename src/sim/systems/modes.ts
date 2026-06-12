@@ -55,7 +55,9 @@ export function modeSystem(sim: GameSim, dt: number): void {
   for (const d of sim.deathsThisTick) {
     const victim = sim.players.get(d.victim); // may have left mid-tick
     const victimWasLeader = mode.mode === 'bounty' && mode.leaderId >= 0 && d.victim === mode.leaderId;
-    if (victim) victim.bounty = 0; // heat resets on death
+    // Heat persists through ordinary deaths; only killing the LEADER resets
+    // their heat (design §6.3 — "a new villain rises").
+    if (victim && victimWasLeader) victim.bounty = 0;
     if (d.killer < 0 || d.killer === d.victim) continue; // suicide/world: no credit
     const k = sim.players.get(d.killer); // may have left mid-tick
     if (!k) continue;
@@ -106,6 +108,7 @@ export function modeSystem(sim: GameSim, dt: number): void {
           flag.state = 'carried';
           flag.carrier = p.id;
           p.carryingFlag = flag.team;
+          p.abilityT = 0; // cancel any engaged ability — carriers fight powerless
           sim.emit({ t: 'flagTaken', team: flag.team, by: p.id });
           break;
         }

@@ -1,6 +1,7 @@
 import { FixedLoop } from './core/loop';
 import { C } from './data/constants';
 import { ALL_CLASS_IDS, type ClassId } from './data/classes';
+import { ALL_GUN_IDS, GUNS, STARTER_GUN, type GunId } from './data/weapons';
 import { DEFAULT_MAP, MAPS } from './data/maps';
 import { GameSim } from './sim/sim';
 import { emptyInput, type GameEvent, type ModeId, type PlayerState } from './sim/types';
@@ -18,6 +19,7 @@ type Role = 'local' | 'host' | 'client';
 
 const NAME_KEY = 'bv3-name';
 const CLASS_KEY = 'bv3-class';
+const GUN_KEY = 'bv3-gun';
 
 function defaultScore(mode: ModeId): number {
   return mode === 'tdm' ? C.TDM_FRAG_LIMIT : mode === 'ctf' ? C.CTF_CAP_LIMIT : C.BOUNTY_WIN_SCORE;
@@ -31,6 +33,7 @@ export class App {
   // Lobby state
   private playerName: string;
   private classId: ClassId;
+  private gunId: GunId;
   private cfg: LobbyConfig = { mode: 'tdm', botCount: 5, scoreLimit: defaultScore('tdm') };
   private host: HostSession | null = null;
   private client: ClientSession | null = null;
@@ -53,6 +56,8 @@ export class App {
     this.playerName = localStorage.getItem(NAME_KEY) ?? `Babo${Math.floor(Math.random() * 900 + 100)}`;
     const storedClass = localStorage.getItem(CLASS_KEY) as ClassId | null;
     this.classId = storedClass && ALL_CLASS_IDS.includes(storedClass) ? storedClass : 'spider';
+    const storedGun = localStorage.getItem(GUN_KEY) as GunId | null;
+    this.gunId = storedGun && ALL_GUN_IDS.includes(storedGun) ? storedGun : STARTER_GUN;
     this.input.enabled = false;
     window.addEventListener('keydown', this.onGlobalKey);
     window.addEventListener('pointerdown', () => this.audio.resume(), { once: true });
@@ -79,8 +84,18 @@ export class App {
   private pickClass(id: ClassId): void {
     this.classId = id;
     localStorage.setItem(CLASS_KEY, id);
-    this.host?.setLocalClass(id);
-    this.client?.setClass(id);
+    this.syncLoadout();
+  }
+
+  private pickGun(id: GunId): void {
+    this.gunId = id;
+    localStorage.setItem(GUN_KEY, id);
+    this.syncLoadout();
+  }
+
+  private syncLoadout(): void {
+    this.host?.setLocalLoadout(this.classId, this.gunId);
+    this.client?.setLoadout(this.classId, this.gunId);
   }
 
   private showLocalLobby(): void {
@@ -96,15 +111,17 @@ export class App {
     this.ui.showLobby({
       title: 'PRACTICE',
       players: [
-        { name: this.playerName, classId: this.classId, team: this.cfg.mode === 'bounty' ? -1 : 0, isYou: true, isHost: true },
+        { name: this.playerName, classId: this.classId, gun: this.gunId, team: this.cfg.mode === 'bounty' ? -1 : 0, isYou: true, isHost: true },
         ...bots,
       ],
       cfg: this.cfg,
       selectedClass: this.classId,
+      selectedGun: this.gunId,
       isHost: true,
       canConfigure: true,
       cb: {
         onClassPick: (id) => { this.pickClass(id); this.showLocalLobby(); },
+        onGunPick: (id) => { this.pickGun(id); this.showLocalLobby(); },
         onConfigChange: (cfg) => {
           const modeChanged = cfg.mode !== this.cfg.mode;
           this.cfg = cfg;
@@ -125,7 +142,7 @@ export class App {
         scoreLimit: this.cfg.scoreLimit, botCount: this.cfg.botCount,
         seed: Math.floor(Math.random() * 2 ** 31),
       };
-      this.host = await HostSession.create(this.playerName, this.classId, settings);
+      this.host = await HostSession.create(this.playerName, this.classId, this.gunId, settings);
       this.host.onLobby = () => this.showHostLobby();
       this.host.onError = (msg) => { this.ui.toast(`Connection error: ${msg}`); };
       this.showHostLobby();
@@ -153,7 +170,7 @@ export class App {
       code: host.code,
       players: [
         ...host.players.map((p, i) => ({
-          name: p.name, classId: p.classId,
+          name: p.name, classId: p.classId, gun: p.gun,
           team: s.mode === 'bounty' ? -1 : i % 2,
           isHost: p.isHost, isYou: p.isHost, bot: false,
         })),
@@ -161,10 +178,12 @@ export class App {
       ],
       cfg: { mode: s.mode, botCount: s.botCount, scoreLimit: s.scoreLimit },
       selectedClass: this.classId,
+      selectedGun: this.gunId,
       isHost: true,
       canConfigure: true,
       cb: {
         onClassPick: (id) => { this.pickClass(id); this.showHostLobby(); },
+        onGunPick: (id) => { this.pickGun(id); this.showHostLobby(); },
         onConfigChange: (cfg) => {
           host.updateSettings({
             mode: cfg.mode, botCount: cfg.botCount,
@@ -181,7 +200,7 @@ export class App {
   private async joinGame(code: string): Promise<void> {
     this.ui.showConnecting('CONNECTING…', () => this.showMenu());
     try {
-      this.client = await ClientSession.join(code, this.playerName, this.classId);
+      this.client = await ClientSession.join(code, this.playerName, this.classId, this.gunId);
       this.client.onLobby = () => this.showClientLobby();
       this.client.onClosed = (reason) => {
         this.ui.toast(reason === 'hostLeft' ? 'Host left — match over' : `Disconnected: ${reason}`);
@@ -203,16 +222,18 @@ export class App {
     this.ui.showLobby({
       title: 'LOBBY',
       players: client.players.map((p, i) => ({
-        name: p.name, classId: p.classId,
+        name: p.name, classId: p.classId, gun: p.gun,
         team: s.mode === 'bounty' ? -1 : i % 2,
         isHost: p.isHost, isYou: !p.isHost && p.name === this.playerName, bot: p.bot,
       })),
       cfg: { mode: s.mode, botCount: s.botCount, scoreLimit: s.scoreLimit },
       selectedClass: this.classId,
+      selectedGun: this.gunId,
       isHost: false,
       canConfigure: false,
       cb: {
         onClassPick: (id) => { this.pickClass(id); this.showClientLobby(); },
+        onGunPick: (id) => { this.pickGun(id); this.showClientLobby(); },
         onConfigChange: () => {},
         onStart: () => {},
         onLeave: () => this.showMenu(),
@@ -239,6 +260,8 @@ export class App {
         ALL_CLASS_IDS[Math.floor(Math.random() * ALL_CLASS_IDS.length)],
         mode === 'bounty' ? -1 : ((startTeam + i) % 2) as 0 | 1,
         true,
+        // Varied bot loadouts feed the scavenge loop — their corpses drop these
+        ALL_GUN_IDS[Math.floor(Math.random() * ALL_GUN_IDS.length)],
       );
     }
   }
@@ -252,7 +275,7 @@ export class App {
     this.lastSettings = settings;
     this.role = 'local';
     const sim = this.buildSim(settings);
-    const me = sim.addPlayer(this.playerName, this.classId, settings.mode === 'bounty' ? -1 : 0, false);
+    const me = sim.addPlayer(this.playerName, this.classId, settings.mode === 'bounty' ? -1 : 0, false, this.gunId);
     this.addBots(sim, settings.botCount, settings.mode, 1);
     this.localId = me.id;
     this.sim = sim;
@@ -270,7 +293,7 @@ export class App {
     let teamCursor = 0;
     for (const lp of host.players) {
       const team = settings.mode === 'bounty' ? -1 : (teamCursor++ % 2) as 0 | 1;
-      const p = sim.addPlayer(lp.name, lp.classId, team, false);
+      const p = sim.addPlayer(lp.name, lp.classId, team, false, lp.gun);
       if (lp.isHost) this.localId = p.id;
       else assignments.set(lp.peerId, p.id);
     }

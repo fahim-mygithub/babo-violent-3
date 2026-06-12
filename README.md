@@ -79,7 +79,7 @@ PeerJS (WebRTC star topology, host-authoritative, client prediction + interpolat
 WebAudio synthesis (zero audio assets) · procedural canvas textures (zero image assets).
 
 ```bash
-npm test           # 100 sim tests incl. full bot matches, determinism, perf
+npm test           # 94 sim tests incl. full bot matches, determinism, perf
 npm run typecheck
 npm run build      # static bundle → dist/ (deployed by .github/workflows/deploy.yml)
 ```

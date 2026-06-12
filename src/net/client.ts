@@ -4,6 +4,7 @@ import { clamp, closestOnAABB, lerp } from '../core/math';
 import { angleDiff } from '../core/math';
 import { C } from '../data/constants';
 import { CLASSES, type ClassId } from '../data/classes';
+import { type GunId } from '../data/weapons';
 import { MAPS, type MapDef } from '../data/maps';
 import type { WorldView } from '../render/renderer';
 import type { GameEvent, PlayerInput, PlayerState, Snapshot } from '../sim/types';
@@ -45,7 +46,7 @@ export class ClientSession {
   private pred = { x: 0, y: 0, vx: 0, vy: 0, valid: false };
   private rendered = { x: 0, y: 0 };
 
-  static join(code: string, name: string, classId: ClassId): Promise<ClientSession> {
+  static join(code: string, name: string, classId: ClassId, gun: GunId): Promise<ClientSession> {
     const s = new ClientSession();
     s.classId = classId;
     return new Promise((resolve, reject) => {
@@ -70,7 +71,7 @@ export class ClientSession {
       peer.on('open', () => {
         const conn = peer.connect(codeToPeerId(code.trim()), { reliable: true, serialization: 'json' });
         s.conn = conn;
-        conn.on('open', () => s.send({ t: 'hello', name, classId }));
+        conn.on('open', () => s.send({ t: 'hello', name, classId, gun }));
         conn.on('data', (raw) => {
           try {
             const msg = raw as HostMsg;
@@ -144,9 +145,9 @@ export class ClientSession {
     }
   }
 
-  setClass(classId: ClassId): void {
+  setLoadout(classId: ClassId, gun: GunId): void {
     this.classId = classId;
-    this.send({ t: 'class', classId });
+    this.send({ t: 'loadout', classId, gun });
   }
 
   // -------------------------------------------------------------------------
@@ -169,7 +170,12 @@ export class ClientSession {
     if (il > 1) { mx /= il; my /= il; }
     p.vx += ((mx * cls.moveForce) / cls.mass) * DT;
     p.vy += ((my * cls.moveForce) / cls.mass) * DT;
-    const damp = 1 / (1 + cls.linearDamping * DT);
+    // Mirror the host's damping modifiers (slick blood / fortify) from the
+    // latest snapshot — skipping them causes visible rubber-banding in pools.
+    const newest = this.snaps[this.snaps.length - 1];
+    const meSnap = newest?.snap.players.find((q) => q.id === this.myId);
+    const dampMult = (meSnap?.inSlick ? C.SLICK_DAMPING_MULT : 1) * (meSnap?.fortifyActive ? 2 : 1);
+    const damp = 1 / (1 + cls.linearDamping * dampMult * DT);
     p.vx *= damp;
     p.vy *= damp;
     const speed = Math.hypot(p.vx, p.vy);

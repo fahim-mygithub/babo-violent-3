@@ -146,6 +146,7 @@ describe('full-match integration', () => {
     teleport(sim, a.id, -5, 0);
     teleport(sim, b.id, 5, 0);
     a.invulnT = 0;
+    b.spawnProt = false; // spawn protection also blocks dealing damage
     b.hp = 50; // so the health pack is consumable
 
     sim.damage(a, b.id, 999, 'workhorse');

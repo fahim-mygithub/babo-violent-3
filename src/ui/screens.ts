@@ -1,9 +1,11 @@
 import { ALL_CLASS_IDS, CLASSES, type ClassId } from '../data/classes';
+import { ALL_GUN_IDS, GUNS, type GunId } from '../data/weapons';
 import type { ModeId, PlayerState } from '../sim/types';
 
 export interface LobbyViewPlayer {
   name: string;
   classId: ClassId;
+  gun?: GunId;
   team: number;
   isHost?: boolean;
   isYou?: boolean;
@@ -24,6 +26,7 @@ export interface MenuCallbacks {
 
 export interface LobbyCallbacks {
   onClassPick: (id: ClassId) => void;
+  onGunPick: (id: GunId) => void;
   onConfigChange: (cfg: LobbyConfig) => void;
   onStart: () => void;
   onLeave: () => void;
@@ -132,11 +135,12 @@ export class UI {
     players: LobbyViewPlayer[];
     cfg: LobbyConfig;
     selectedClass: ClassId;
+    selectedGun: GunId;
     isHost: boolean;
     canConfigure: boolean;
     cb: LobbyCallbacks;
   }): void {
-    const { players, cfg, selectedClass, isHost, canConfigure, cb } = opts;
+    const { players, cfg, selectedClass, selectedGun, isHost, canConfigure, cb } = opts;
     const el = document.createElement('div');
     el.className = 'screen';
 
@@ -163,10 +167,25 @@ export class UI {
         </div>
       </div>`;
 
+    const gun = GUNS[selectedGun];
+    const gunChips = ALL_GUN_IDS.map((id) => {
+      const g = GUNS[id];
+      const col = '#' + g.color.toString(16).padStart(6, '0');
+      return `
+        <div class="gun-chip ${id === selectedGun ? 'sel' : ''}" data-gun="${id}" title="${g.identity}">
+          <span class="dot" style="background:${col}"></span>${g.name}
+        </div>`;
+    }).join('');
+    const gunDetail = `
+      <div class="class-detail" style="min-height:20px;margin-top:8px">
+        <b>${gun.name}</b> — ${gun.identity} ·
+        ${gun.sustain === 'reload' ? `mag ${gun.magSize}` : 'heat'} · recoil ${gun.recoil}
+      </div>`;
+
     const rows = players.map((p) => `
       <div class="player-row ${p.team === 0 ? 't0' : p.team === 1 ? 't1' : 'ffa'}">
         <span>${p.isYou ? '▸ ' : ''}${p.name}${p.bot ? ' <span class="tag">BOT</span>' : ''}</span>
-        <span class="tag">${CLASSES[p.classId].name}${p.isHost ? ' · HOST' : ''}</span>
+        <span class="tag">${CLASSES[p.classId].name}${p.gun ? ' · ' + GUNS[p.gun].name : ''}${p.isHost ? ' · HOST' : ''}</span>
       </div>`).join('');
 
     const codeBlock = opts.code
@@ -197,6 +216,9 @@ export class UI {
           <h3>Pick your chassis</h3>
           <div class="class-grid">${classCards}</div>
           ${detail}
+          <h3 style="margin-top:14px">Pick your gun</h3>
+          <div class="gun-row">${gunChips}</div>
+          ${gunDetail}
         </div>
         <div style="display:flex;flex-direction:column;gap:14px">
           <div class="panel">${codeBlock}
@@ -218,6 +240,9 @@ export class UI {
 
     el.querySelectorAll('.class-card').forEach((card) => {
       card.addEventListener('click', () => cb.onClassPick((card as HTMLElement).dataset.class as ClassId));
+    });
+    el.querySelectorAll('.gun-chip').forEach((chip) => {
+      chip.addEventListener('click', () => cb.onGunPick((chip as HTMLElement).dataset.gun as GunId));
     });
     el.querySelector('#code')?.addEventListener('click', () => {
       navigator.clipboard?.writeText(opts.code!);

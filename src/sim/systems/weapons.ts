@@ -120,6 +120,11 @@ export function weaponSystem(sim: GameSim, dt: number): void {
 
 /** Shared per-discharge bookkeeping: ammo/heat, cooldown, bloom, recoil. */
 function discharge(sim: GameSim, p: PlayerState, gun: GunConfig): void {
+  // Attacking forfeits spawn protection (you can't deal damage while protected)
+  if (p.spawnProt) {
+    p.spawnProt = false;
+    p.invulnT = 0;
+  }
   if (gun.sustain === 'reload') {
     p.mag = Math.max(0, p.mag - 1);
   } else {
@@ -130,7 +135,8 @@ function discharge(sim: GameSim, p: PlayerState, gun: GunConfig): void {
       sim.emit({ t: 'overheat', player: p.id });
     }
   }
-  p.fireCD = 1 / gun.fireRate;
+  // Charge guns are paced by their charge time, not the fire-rate lockout
+  p.fireCD = gun.chargeTime ? 0.1 : 1 / gun.fireRate;
   p.spreadAcc = Math.min(p.spreadAcc + gun.spreadGrowth, Math.max(0, gun.spreadMax - gun.spread));
   sim.applyImpulse(p, -Math.cos(p.aim) * gun.recoil, -Math.sin(p.aim) * gun.recoil);
 }
@@ -178,11 +184,13 @@ function fireLance(sim: GameSim, p: PlayerState, gun: GunConfig): void {
     if (t >= 0 && t < bestT) { bestT = t; victim = q; }
   }
 
+  // Discharge first: it clears spawn protection, which would otherwise block
+  // this very ray's damage (hitscan resolves within the same call).
+  discharge(sim, p, gun);
   if (victim) {
     sim.damage(victim, p.id, gun.damage, gun.id);
     sim.applyImpulse(victim, dx * LANCE_KNOCK, dy * LANCE_KNOCK);
   }
-  discharge(sim, p, gun);
   sim.emit({ t: 'rail', x0, y0, x1: x0 + (ex - x0) * bestT, y1: y0 + (ey - y0) * bestT, owner: p.id });
   sim.emit({ t: 'shot', player: p.id, gun: gun.id, x: x0, y: y0, aim });
 }

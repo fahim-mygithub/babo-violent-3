@@ -4,6 +4,17 @@ import type { GameEvent } from '../src/sim/types';
 import { clearEvents, makeSim, run, teleport } from './helpers';
 
 describe('blood system', () => {
+  it('physical pools are hard-capped at SLICK_ZONE_CAP; oldest demote', async () => {
+    const sim = await makeSim();
+    // 30 well-spaced pools (beyond merge distance) — only 24 may stay physical
+    for (let i = 0; i < 30; i++) {
+      sim.spawnPool(-24 + (i % 10) * 4.5, -12 + Math.floor(i / 10) * 9, 1.2);
+    }
+    expect(sim.pools.length).toBe(C.SLICK_ZONE_CAP);
+    const gone = sim.events.filter((e) => e.t === 'poolGone').length;
+    expect(gone).toBe(30 - C.SLICK_ZONE_CAP);
+  });
+
   it('pool ages, shrinks only in the final 30%, and expires with poolGone', async () => {
     const sim = await makeSim();
     sim.spawnPool(0, 0, 1.2);

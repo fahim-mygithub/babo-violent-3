@@ -73,8 +73,10 @@ function autoTake(sim: GameSim, p: PlayerState, pk: Pickup): boolean {
   } else if (p.equip === kind) {
     if (p.equipCount >= C.EQUIP_CAP) return false;
     p.equipCount++;
+  } else if (p.equipCount > 0) {
+    return false; // never silently discard a held special — leave it on the pad
   } else {
-    p.equip = kind; // replace whatever was held
+    p.equip = kind;
     p.equipCount = 1;
   }
   sim.emit({ t: 'pickup', player: p.id, kind: 'equip', equip: kind });

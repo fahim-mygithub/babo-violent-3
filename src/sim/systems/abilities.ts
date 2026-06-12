@@ -85,6 +85,12 @@ export function abilitySystem(sim: GameSim, dt: number): void {
 
 function cast(sim: GameSim, b: AbilityBook, p: PlayerState, ab: AbilityCfg): void {
   const cls = CLASSES[p.classId];
+  // Casting is an aggressive act — it forfeits spawn protection (dash can
+  // damage, wells drag enemies; uniform rule keeps it predictable).
+  if (p.spawnProt) {
+    p.spawnProt = false;
+    p.invulnT = 0;
+  }
   switch (ab.id) {
     case 'grapple': {
       const x1 = p.x + Math.cos(p.aim) * ABILITY.GRAPPLE_RANGE;
@@ -120,6 +126,7 @@ function cast(sim: GameSim, b: AbilityBook, p: PlayerState, ab: AbilityCfg): voi
     case 'fortify': {
       p.fortifyActive = true;
       p.abilityT = ab.duration;
+      setColliderMass(sim, p.id, cls.mass * ABILITY.FORTIFY_MASS_MULT); // can't be bulldozed
       b.engaged.add(p.id);
       sim.emit({ t: 'abilityCast', player: p.id, ability: 'fortify', x: p.x, y: p.y });
       break;
@@ -160,6 +167,7 @@ function endAbility(sim: GameSim, b: AbilityBook, p: PlayerState, ab: AbilityCfg
       break;
     case 'fortify':
       p.fortifyActive = false;
+      setColliderMass(sim, p.id, CLASSES[p.classId].mass);
       break;
     case 'phase':
       p.phaseActive = false;
@@ -234,4 +242,9 @@ function setRestitution(sim: GameSim, id: number, value: number): void {
 function setGroups(sim: GameSim, id: number, groups: number): void {
   const body = sim.bodies.get(id);
   if (body && body.numColliders() > 0) body.collider(0).setCollisionGroups(groups);
+}
+
+function setColliderMass(sim: GameSim, id: number, mass: number): void {
+  const body = sim.bodies.get(id);
+  if (body && body.numColliders() > 0) body.collider(0).setMass(mass);
 }

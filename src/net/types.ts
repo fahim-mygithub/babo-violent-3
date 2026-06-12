@@ -1,4 +1,5 @@
 import type { ClassId } from '../data/classes';
+import type { GunId } from '../data/weapons';
 import type { GameEvent, ModeId, PlayerInput, Snapshot } from '../sim/types';
 
 /** A player as seen in the lobby (host's authoritative list). */
@@ -6,6 +7,7 @@ export interface LobbyPlayer {
   peerId: string; // '' for the host themself and for bots
   name: string;
   classId: ClassId;
+  gun: GunId;
   isHost: boolean;
   bot: boolean;
 }
@@ -20,8 +22,8 @@ export interface MatchSettings {
 
 /** Client → host messages. */
 export type ClientMsg =
-  | { t: 'hello'; name: string; classId: ClassId }
-  | { t: 'class'; classId: ClassId }
+  | { t: 'hello'; name: string; classId: ClassId; gun: GunId }
+  | { t: 'loadout'; classId: ClassId; gun: GunId }
   /** Redundant input window: the last ≤3 sampled inputs, newest last. */
   | { t: 'input'; inputs: PlayerInput[] };
 

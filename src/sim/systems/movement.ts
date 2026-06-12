@@ -28,6 +28,7 @@ export function movementSystem(sim: GameSim, dt: number): void {
 
     // Timers owned by this system
     p.invulnT = Math.max(0, p.invulnT - dt);
+    if (p.invulnT === 0) p.spawnProt = false;
 
     // Input direction — normalize only when diagonals exceed unit length
     let mx = p.input.mx;

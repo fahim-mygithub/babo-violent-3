@@ -29,3 +29,25 @@ Per `docs/RUBRIC.md`, every deviation from
    team" (equivalent at lobby time; mid-match join isn't in v1).
 10. **Snapshot cadence 20 Hz** (every 3rd tick) — the spec's 20–30 Hz range, bottom end,
     chosen because interpolation at 100 ms buffer covers it cleanly.
+
+## Added after the adversarial review (2026-06-12)
+
+11. **Spawn protection is symmetric and breakable.** Spec: protected Babos "can't deal
+    or take damage". Implemented: dealing is blocked, and any attack (shot, throw,
+    ability cast) immediately forfeits remaining protection — prevents both protected
+    aggression and confusing no-damage shots.
+12. **Grapple is capped at 3 s with a 0.8 s cooldown** (spec table: "— (held)",
+    uncapped). Prevents permanent wall-hangs; numbers tunable.
+13. **Gravity Well is pull-only.** Spec lists "pull/repel"; the class identity
+    (drag enemies into hazards) is the pull. Repel variant deferred.
+14. **CTF "ability disabled"** = new casts blocked (cooldown held at ≥0.25 s) and any
+    engaged ability cancelled at the moment of flag pickup.
+15. **Lance pacing**: charge time is the rate limiter (~0.9 s/shot), not the generic
+    fire-rate lockout (which read as ~1.8 s/shot).
+16. **Client prediction approximations**: mirrors the host's slick/fortify damping from
+    snapshots, but does not replicate dash/grapple forces or wall restitution —
+    divergence is bounded by reconciliation every third tick.
+17. **Equipment never auto-swaps kinds**: rolling over a different special while holding
+    one leaves it on the pad (the spec's anti-accidental-loss rationale, extended).
+18. **High Bounty heat persists through ordinary deaths** (fixed to match spec §6.3:
+    only killing the *Leader* resets their heat).

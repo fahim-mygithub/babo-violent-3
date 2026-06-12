@@ -119,8 +119,8 @@ export class GameSim {
     const p: PlayerState = {
       id, name, classId, team, bot,
       x: 0, y: 0, vx: 0, vy: 0, aim: 0,
-      hp: C.MAX_HP, alive: false, respawnT: 0.01, invulnT: 0,
-      gun, mag: GUNS[gun].magSize ?? 0, reloadT: 0, heat: 0, overheatT: 0,
+      hp: C.MAX_HP, alive: false, respawnT: 0.01, invulnT: 0, spawnProt: false,
+      gun, chosenGun: gun, mag: GUNS[gun].magSize ?? 0, reloadT: 0, heat: 0, overheatT: 0,
       spin: 0, charge: 0, fireCD: 0, spreadAcc: 0,
       grenades: C.START_GRENADES, equip: null, equipCount: 0, throwT: 0, throwing: false,
       abilityCD: 0, abilityT: 0,
@@ -245,6 +245,7 @@ export class GameSim {
   damage(target: PlayerState, attacker: number, amount: number, gun: GunId | 'world'): number {
     if (!target.alive || target.invulnT > 0 || target.phaseActive) return 0;
     const atk = attacker >= 0 ? this.players.get(attacker) : undefined;
+    if (atk && atk.spawnProt) return 0; // spawn-protected babos can't deal damage either
     if (atk && atk.id !== target.id && atk.team !== -1 && atk.team === target.team) return 0; // no friendly fire
     let dmg = amount;
     if (atk && atk.id === target.id) dmg *= 0.35; // self-damage discount enables rocket-jump tech
@@ -292,7 +293,6 @@ export class GameSim {
     this.spawnPool(victim.x, victim.y, C.DEATH_POOL_RADIUS);
     this.dropPickup('gun', victim.x - 0.5, victim.y, victim.gun);
     this.dropPickup('health', victim.x + 0.5, victim.y);
-    victim.gun = STARTER_GUN;
     this.deathsThisTick.push({ victim: victim.id, killer, gun });
   }
 
@@ -302,9 +302,10 @@ export class GameSim {
     p.hp = C.MAX_HP;
     p.respawnT = 0;
     p.invulnT = C.SPAWN_INVULN;
+    p.spawnProt = true;
     p.x = spawn.x; p.y = spawn.y; p.vx = 0; p.vy = 0;
-    p.gun = STARTER_GUN;
-    p.mag = GUNS[STARTER_GUN].magSize ?? 0;
+    p.gun = p.chosenGun; // lobby loadout returns; scavenged guns are lost on death
+    p.mag = GUNS[p.gun].magSize ?? 0;
     p.reloadT = 0; p.heat = 0; p.overheatT = 0; p.spin = 0; p.charge = 0;
     p.fireCD = 0; p.spreadAcc = 0;
     p.grenades = C.START_GRENADES;

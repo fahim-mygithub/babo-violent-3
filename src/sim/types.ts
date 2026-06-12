@@ -56,9 +56,13 @@ export interface PlayerState {
   alive: boolean;
   respawnT: number;
   invulnT: number;
+  /** Spawn protection: while true you also can't DEAL damage; any attack breaks it. */
+  spawnProt: boolean;
 
   // Weapon state
   gun: GunId;
+  /** Lobby-picked weapon — restored on every respawn (scavenged guns are lost on death). */
+  chosenGun: GunId;
   mag: number;          // reload guns: rounds left
   reloadT: number;      // >0 while reloading
   heat: number;         // heat guns: 0..1

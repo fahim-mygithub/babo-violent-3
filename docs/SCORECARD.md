@@ -70,5 +70,46 @@ automation this session (practice matches, staged scenarios, two-tab P2P).
 A human pass on mid-range hardware is the remaining confirmation.
 ² Audio engine code-complete and event-driven; a hearing pass should tune gains.
 
-Adversarial review findings and fixes: see the review section appended below when the
-`bv3-rubric-review` workflow completes.
+---
+
+## Adversarial review (bv3-rubric-review workflow, 10 agents)
+
+Four parallel reviewers (rubric scorer, design-fidelity auditor, bug hunter, balance
+prober) + an adversarial verification panel per major finding. Independent rubric
+scoring agreed with the table above (16 code-verifiable items: 15 P, 1 P-, since
+upgraded). Outcomes:
+
+**Confirmed and FIXED (same day):**
+1. **CRITICAL — 7 of 8 guns unreachable in real matches.** Everyone spawned Stinger,
+   corpses only drop carried guns, no gun nodes, no lobby pick — balance probe measured
+   0 non-Stinger kills across 9 sim-minutes. Fixed the design-doc way: lobby **gun
+   picker** (8 guns, persisted, synced over the net protocol), `chosenGun` restored on
+   respawn, bots spawn with randomized loadouts. Verified live: bot corpses now scatter
+   ion/hurricane/maw/workhorse/pyre across the arena.
+2. **MAJOR — zombie Babo on mid-match disconnect.** The "idle on drop" path wrote to an
+   already-orphaned peer entry; a dropped peer's Babo kept driving + firing forever.
+   Fixed via a dropped-player queue drained in `applyInputs`.
+3. Unvalidated peer `classId` could crash the host at match start → loadouts sanitized.
+4. Spawn invulnerability let you *deal* damage (spec: "can't deal or take") → symmetric
+   protection; any attack forfeits it (DEVIATIONS #11).
+5. High Bounty heat reset on every death (spec: only the killed Leader resets) → fixed
+   to spec; killstreak interpretation removed.
+6. Client prediction ignored slick/fortify damping → mirrored from snapshots (measured
+   0.76 u divergence over 30 ticks in pools before the fix).
+7. Fortify never applied the spec'd mass ×5 (could be bulldozed by contact) → collider
+   mass ×5 during fortify.
+8. Lance effective cycle was ~1.8 s vs the spec's per-charge ~0.8 s → charge-paced.
+9. Equipment auto-pickup silently discarded a held special of a different kind → now
+   left on the pad.
+10. CTF carriers kept already-active abilities (grapple flag-runs) → cancelled on pickup.
+11. Grenade over-wall height check integrated z one step ahead → evaluated from
+    start-of-step state.
+
+**Logged as accepted deviations (DEVIATIONS.md #12–17):** grapple cap/cooldown,
+pull-only Gravity Well, CTF ability-disable encoding, prediction approximations.
+
+**Balance probe (headless, seeds × matches):** all five classes within a healthy kill
+share in FFA; match pacing ~10 kills/min in 8-bot TDM (healthy 4–12 band). Gun TTK
+spread acceptable; bots can operate charge/spin guns.
+
+All 94 tests pass post-fix; the suite gained a slick-cap overflow test (C2 → **P**).

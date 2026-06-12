@@ -153,7 +153,9 @@ describe('weaponSystem', () => {
     expect(eventsOf(sim, 'chargeReady').length).toBe(1);
     expect(eventsOf(sim, 'rail').length).toBe(1);
     expect(eventsOf(sim, 'shot').length).toBe(1);
-    expect(a.charge).toBe(0);
+    // Charge resets on fire; the short post-shot lockout (0.1s) means a held
+    // trigger may have begun rebuilding by the time we assert.
+    expect(a.charge).toBeLessThan(0.1);
     expect(v.hp).toBe(100 - GUNS.lance.damage);
     // Knock along the ray (+x); phantom mass 0.8 → Δv = 12.5
     expect(sim.bodies.get(v.id)!.linvel().x).toBeGreaterThan(5);

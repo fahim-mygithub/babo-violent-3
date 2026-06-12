@@ -22,6 +22,7 @@ describe('sim skeleton', () => {
     sim.respawn(a);
     sim.respawn(v);
     v.invulnT = 0;
+    a.spawnProt = false; // spawn protection also blocks dealing damage
     sim.damage(v, a.id, 999, 'stinger');
     expect(v.alive).toBe(false);
     expect(sim.pickups.some((p) => p.kind === 'gun')).toBe(true);

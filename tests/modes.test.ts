@@ -20,6 +20,7 @@ describe('mode system', () => {
     const v = sim.addPlayer('V', 'phantom', 1, false);
     run(sim, 1);
     v.invulnT = 0;
+    a.spawnProt = false; // spawn protection also blocks dealing damage
     sim.damage(v, a.id, 999, 'stinger');
     expect(v.alive).toBe(false);
     const ticks = runUntil(sim, () => v.alive);
@@ -33,6 +34,7 @@ describe('mode system', () => {
     const v = sim.addPlayer('V', 'phantom', 1, false);
     run(sim, 1);
     v.invulnT = 0;
+    a.spawnProt = false;
     sim.damage(v, a.id, 999, 'stinger');
     run(sim, 1);
     expect(a.kills).toBe(1);
@@ -41,18 +43,19 @@ describe('mode system', () => {
     expect(v.deaths).toBe(1);
   });
 
-  it('tdm: suicide and world deaths score nothing (and reset bounty)', async () => {
+  it('tdm: suicide and world deaths score nothing (heat persists)', async () => {
     const sim = await makeSim();
     const a = sim.addPlayer('A', 'spider', 0, false);
     run(sim, 1);
     a.invulnT = 0;
-    a.bounty = 2; // pretend heat; must reset on death
+    a.spawnProt = false;
+    a.bounty = 2; // pretend heat; persists through ordinary deaths (design §6.3)
     sim.damage(a, a.id, 999, 'thumper'); // self-damage discount still lethal
     run(sim, 1);
     expect(a.alive).toBe(false);
     expect(a.kills).toBe(0);
     expect(a.score).toBe(0);
-    expect(a.bounty).toBe(0);
+    expect(a.bounty).toBe(2);
     expect(sim.mode.teamScores).toEqual([0, 0]);
 
     // World kill after respawn: still no credit
@@ -71,6 +74,7 @@ describe('mode system', () => {
     clearEvents(sim);
 
     v.invulnT = 0;
+    a.spawnProt = false;
     sim.damage(v, a.id, 999, 'stinger');
     run(sim, 1);
     expect(a.bounty).toBe(1);
@@ -100,6 +104,7 @@ describe('mode system', () => {
 
     sim.mode.scoreLimit = 1 + C.BOUNTY_LEADER_BONUS; // the leader kill should also win it
     a.invulnT = 0;
+    b.spawnProt = false;
     sim.damage(a, b.id, 999, 'stinger');
     run(sim, 1);
     expect(b.score).toBe(1 + C.BOUNTY_LEADER_BONUS);
@@ -119,6 +124,7 @@ describe('mode system', () => {
     sim.mode.scoreLimit = 1;
     run(sim, 1);
     v.invulnT = 0;
+    a.spawnProt = false;
     sim.damage(v, a.id, 999, 'stinger');
     run(sim, 1);
     expect(sim.mode.ended).toBe(true);
@@ -135,6 +141,7 @@ describe('mode system', () => {
     const v = sim.addPlayer('V', 'phantom', 1, false);
     run(sim, 1);
     v.invulnT = 0;
+    a.spawnProt = false;
     sim.damage(v, a.id, 999, 'stinger');
     run(sim, 1);
     sim.mode.timeLeft = 0.02;

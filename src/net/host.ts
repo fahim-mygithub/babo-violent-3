@@ -1,6 +1,7 @@
 import Peer from 'peerjs';
 import type { DataConnection } from 'peerjs';
-import type { ClassId } from '../data/classes';
+import { ALL_CLASS_IDS, type ClassId } from '../data/classes';
+import { ALL_GUN_IDS, STARTER_GUN, type GunId } from '../data/weapons';
 import type { GameEvent, PlayerInput, Snapshot } from '../sim/types';
 import { emptyInput } from '../sim/types';
 import type { GameSim } from '../sim/sim';
@@ -35,14 +36,16 @@ export class HostSession {
   private peer: Peer | null = null;
   private peers = new Map<string, PeerEntry>();
   private started = false;
+  /** Players whose peer dropped mid-match — their input gets zeroed once. */
+  private droppedPlayers: number[] = [];
 
   private constructor(settings: MatchSettings) {
     this.settings = settings;
   }
 
-  static create(name: string, classId: ClassId, settings: MatchSettings): Promise<HostSession> {
+  static create(name: string, classId: ClassId, gun: GunId, settings: MatchSettings): Promise<HostSession> {
     const session = new HostSession(settings);
-    session.players = [{ peerId: '', name, classId, isHost: true, bot: false }];
+    session.players = [{ peerId: '', name, classId, gun, isHost: true, bot: false }];
     return new Promise((resolve, reject) => {
       let attempts = 0;
       const tryOpen = (): void => {
@@ -100,7 +103,8 @@ export class HostSession {
         entry.lobby = {
           peerId: entry.conn.peer,
           name: String(msg.name).slice(0, 18) || 'Babo',
-          classId: msg.classId,
+          classId: sanitizeClass(msg.classId),
+          gun: sanitizeGun(msg.gun),
           isHost: false,
           bot: false,
         };
@@ -108,9 +112,10 @@ export class HostSession {
         this.broadcastLobby();
         break;
       }
-      case 'class':
+      case 'loadout':
         if (entry.lobby) {
-          entry.lobby.classId = msg.classId;
+          entry.lobby.classId = sanitizeClass(msg.classId);
+          entry.lobby.gun = sanitizeGun(msg.gun);
           this.broadcastLobby();
         }
         break;
@@ -131,9 +136,9 @@ export class HostSession {
       this.players = this.players.filter((p) => p.peerId !== peerId);
       if (!this.started) this.broadcastLobby();
     }
-    // Mid-match: the babo idles (zeroed input) rather than vanishing.
-    entry.freshest = emptyInput();
-    entry.playerId = -1;
+    // Mid-match: the babo idles — queue a one-time input zero for applyInputs
+    // (the sim otherwise keeps replaying the last received input forever).
+    if (entry.playerId >= 0) this.droppedPlayers.push(entry.playerId);
     this.onPeerLeft(peerId);
   }
 
@@ -152,8 +157,9 @@ export class HostSession {
     this.onLobby();
   }
 
-  setLocalClass(classId: ClassId): void {
+  setLocalLoadout(classId: ClassId, gun: GunId): void {
     this.players[0].classId = classId;
+    this.players[0].gun = gun;
     this.broadcastLobby();
   }
 
@@ -175,6 +181,10 @@ export class HostSession {
 
   /** Write freshest buffered inputs into the sim. Call before sim.step(). */
   applyInputs(sim: GameSim): void {
+    if (this.droppedPlayers.length > 0) {
+      for (const id of this.droppedPlayers) sim.setInput(id, emptyInput());
+      this.droppedPlayers.length = 0;
+    }
     for (const entry of this.peers.values()) {
       if (entry.playerId < 0 || !entry.freshest) continue;
       if (entry.freshest.seq <= entry.applied) continue;
@@ -209,4 +219,13 @@ function sanitize(snap: Snapshot): Snapshot {
     if (!Number.isFinite(pk.ttl)) pk.ttl = 99999;
   }
   return snap;
+}
+
+/** Never trust peer-supplied ids — a bad classId would crash sim.addPlayer. */
+function sanitizeClass(id: ClassId): ClassId {
+  return ALL_CLASS_IDS.includes(id) ? id : 'spider';
+}
+
+function sanitizeGun(id: GunId): GunId {
+  return ALL_GUN_IDS.includes(id) ? id : STARTER_GUN;
 }

@@ -91,7 +91,7 @@ describe('pickup system', () => {
     expect(nodePickup(sim, 'equip', FRAG_NODE.idx)).toBeDefined();
   });
 
-  it('molotov/smoke: equips, replaces on different kind, stacks to EQUIP_CAP', async () => {
+  it('molotov/smoke: equips, never silently swaps kinds, stacks to EQUIP_CAP', async () => {
     const { sim, p } = await setup();
     teleport(sim, p.id, MOLOTOV_NODE.x, MOLOTOV_NODE.y);
     run(sim, 1);
@@ -99,20 +99,32 @@ describe('pickup system', () => {
     expect(p.equipCount).toBe(1);
     expect(nodePickup(sim, 'equip', MOLOTOV_NODE.idx)).toBeUndefined();
 
-    // Different kind replaces (count resets to 1)
+    // Different kind while holding one: left on the pad (no accidental loss)
     teleport(sim, p.id, SMOKE_NODE.x, SMOKE_NODE.y);
+    run(sim, 1);
+    expect(p.equip).toBe('molotov');
+    expect(p.equipCount).toBe(1);
+    expect(nodePickup(sim, 'equip', SMOKE_NODE.idx)).toBeDefined();
+
+    // Same kind stacks up to EQUIP_CAP, then leaves extras on the ground
+    pushEquipDrop(sim, 'molotov', p.x, p.y);
+    run(sim, 1);
+    expect(p.equipCount).toBe(C.EQUIP_CAP);
+    pushEquipDrop(sim, 'molotov', p.x, p.y);
+    run(sim, 1);
+    expect(p.equipCount).toBe(C.EQUIP_CAP);
+    expect(sim.pickups.some((pk) => pk.kind === 'equip' && pk.equip === 'molotov' && pk.nodeIdx === -1)).toBe(true);
+
+    // Once empty, a different kind can be taken (clear leftover ground drops
+    // first — they sit at the player's feet and would be taken before the pad)
+    for (let i = sim.pickups.length - 1; i >= 0; i--) {
+      if (sim.pickups[i].nodeIdx === -1) sim.pickups.splice(i, 1);
+    }
+    p.equipCount = 0;
+    p.equip = null;
     run(sim, 1);
     expect(p.equip).toBe('smoke');
     expect(p.equipCount).toBe(1);
-
-    // Same kind stacks up to EQUIP_CAP, then leaves extras on the ground
-    pushEquipDrop(sim, 'smoke', p.x, p.y);
-    run(sim, 1);
-    expect(p.equipCount).toBe(C.EQUIP_CAP);
-    pushEquipDrop(sim, 'smoke', p.x, p.y);
-    run(sim, 1);
-    expect(p.equipCount).toBe(C.EQUIP_CAP);
-    expect(sim.pickups.some((pk) => pk.kind === 'equip' && pk.equip === 'smoke' && pk.nodeIdx === -1)).toBe(true);
   });
 
   it('gun swap on PICKUP press edge: drops old gun at player, equips new with full mag', async () => {

@@ -50,7 +50,11 @@ export function grenadeSystem(sim: GameSim, dt: number): void {
     const g = sim.grenades[i];
 
     if (!g.landed) {
-      g.z += g.vz * dt;
+      // Capture start-of-step vertical state: the wall sweep below must
+      // evaluate the arc height from where the step BEGAN, not its end.
+      const z0 = g.z;
+      const vz0 = g.vz;
+      g.z += vz0 * dt;
       g.vz -= GRAV * dt;
 
       // Sweep 2D against walls; a high enough arc passes over low cover
@@ -62,7 +66,7 @@ export function grenadeSystem(sim: GameSim, dt: number): void {
         const t = segAABB(g.x, g.y, nx, ny, w.x, w.y, w.w, w.h);
         if (t < 0) continue;
         const ft = t * dt;
-        const zAtHit = g.z + g.vz * ft - (GRAV / 2) * ft * ft;
+        const zAtHit = z0 + vz0 * ft - (GRAV / 2) * ft * ft;
         if (zAtHit > w.height) continue; // sails over the wall
         if (hitT < 0 || t < hitT) { hitT = t; hitWall = w; }
       }
@@ -132,6 +136,12 @@ function releaseThrow(sim: GameSim, p: PlayerState): void {
   p.throwT = 0;
   p.throwing = false;
   if (!kind) return; // pockets empty
+
+  // Attacking forfeits spawn protection
+  if (p.spawnProt) {
+    p.spawnProt = false;
+    p.invulnT = 0;
+  }
 
   // The arc grows toward the crosshair, capped by hold time
   const chargeMax = C.GRENADE_MIN_RANGE
