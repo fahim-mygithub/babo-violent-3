@@ -58,14 +58,18 @@ export class TouchControls implements InputSource {
   aimMag = 0;
   firing = false;
   grenadeArc = { active: false, aim: 0, dist: 0 };
+  /** One-shot: the release tick still emits the final arc aim/dist (THROW already
+   *  dropped) so the sim's falling-edge throw reads the full charged range. */
+  private grenadeReleasing = false;
 
   private layer: HTMLDivElement;
   private seq = 1;
   private moveX = 0;
   private moveY = 0;
 
-  /** Latest world view for aim-assist. Null until setWorld is called. */
-  private view: { players: PlayerState[] } | null = null;
+  /** Latest world view for aim-assist. Null until setWorld is called. assist()
+   *  only iterates players, so we hold the iterable reference (no per-tick copy). */
+  private view: { players: Iterable<PlayerState> } | null = null;
 
   private leftId = -1;
   private leftOX = 0;
@@ -251,9 +255,10 @@ export class TouchControls implements InputSource {
     }
   };
 
-  /** Feed the current world view + local player id for aim-assist. */
+  /** Feed the current world view + local player id for aim-assist. assist() only
+   *  reads players, so store the iterable reference — no fresh array per tick. */
   setWorld(view: { players: Iterable<PlayerState> } | null, localId: number): void {
-    this.view = view ? { players: [...view.players] } : null;
+    this.view = view;
     this.localId = localId;
   }
 
@@ -310,9 +315,14 @@ export class TouchControls implements InputSource {
     this.grenadeArc.dist = C.GRENADE_MIN_RANGE + (C.GRENADE_MAX_RANGE - C.GRENADE_MIN_RANGE) * m;
   }
 
-  /** Release: drop BTN.THROW so the sim's falling-edge releaseThrow fires. */
+  /**
+   * Release: drop the arc but carry its final aim/dist through ONE more sample so
+   * the sim's falling-edge releaseThrow (which reads input.aimDist on the release
+   * tick) sees the full charged drag range, not the reset-to-min default.
+   */
   endGrenade(): void {
     this.grenadeArc.active = false;
+    this.grenadeReleasing = true;
   }
 
   /** Tap RELOAD: latched, consumed on the next sample (one emit per tap). */
@@ -328,6 +338,7 @@ export class TouchControls implements InputSource {
     this.firing = false;
     this.aimMag = 0;
     this.grenadeArc.active = false;
+    this.grenadeReleasing = false;
     this.reloadLatch = false;
     this.pickupLatch = false;
     this.abilityHeld = false;
@@ -343,12 +354,15 @@ export class TouchControls implements InputSource {
 
   sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
     let buttons = 0;
-    if (this.firing) buttons |= BTN.FIRE;
+    // Modal grenade arc: while aiming a throw, the gun must NOT fire along the
+    // drag direction — suppress FIRE so the arc is fully modal.
+    if (this.firing && !this.grenadeArc.active) buttons |= BTN.FIRE;
     if (this.abilityHeld) buttons |= BTN.ABILITY;
     // Aim-assist is on by default; explicit `false` (a settings toggle, S1.6)
-    // disables it. Read defensively so headless tests keep assist on.
+    // disables it. Read defensively so headless tests keep assist on. Gate it on
+    // aimActive so a RELEASED stick doesn't magnetically track enemies.
     const assistOn = (window as { __bv3?: { touchAssist?: boolean } }).__bv3?.touchAssist !== false;
-    let aim = assistOn ? this.assist(this.aimAngle) : this.aimAngle;
+    let aim = (assistOn && this.aimActive) ? this.assist(this.aimAngle) : this.aimAngle;
     let aimDist = this.aimActive
       ? AIM_MIN_DIST + (AIM_MAX_DIST - AIM_MIN_DIST) * this.aimMag
       : AIM_MIN_DIST;
@@ -358,6 +372,12 @@ export class TouchControls implements InputSource {
       buttons |= BTN.THROW;
       aim = this.grenadeArc.aim;
       aimDist = this.grenadeArc.dist;
+    } else if (this.grenadeReleasing) {
+      // Release tick: THROW already dropped (falling edge) but still hand the sim
+      // the final charged drag aim/dist so the throw reaches the dragged range.
+      aim = this.grenadeArc.aim;
+      aimDist = this.grenadeArc.dist;
+      this.grenadeReleasing = false;
     }
     // Consume-on-first-sample: emit each tapped bit at most once.
     if (this.reloadLatch) { buttons |= BTN.RELOAD; this.reloadLatch = false; }

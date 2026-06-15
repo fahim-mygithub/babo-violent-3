@@ -142,6 +142,34 @@ describe('TouchControls aim-assist', () => {
     layer.dispatchEvent(pe('pointermove', 2, 840, 600));
     expect(() => tc.sample({ x: 0, y: 0 }, 0, 0)).not.toThrow();
   });
+
+  it('does NOT assist while the aim stick is released (idle aim does not track enemies)', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    // A live enemy sits at angle 0 (dead +x). With the stick released, aimAngle is
+    // 0 by default — but assist must NOT nudge a released stick toward the enemy.
+    tc.setWorld(worldWith([{ id: 2, x: 10, y: 0.5 }]), 1); // slightly off-axis target
+    // No pointerdown → aimActive is false (idle).
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(tc.aimActive).toBe(false);
+    expect(inp.aim).toBe(0); // raw idle aim, unmodified by assist
+  });
+
+  it('suppresses gun FIRE while the grenade arc is active (modal arc)', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    // Deflect the right stick past the autofire threshold → firing=true.
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    layer.dispatchEvent(pe('pointermove', 2, 840, 600));
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.FIRE).toBe(BTN.FIRE);
+    // Now open the grenade arc: FIRE must be suppressed (only THROW), so the gun
+    // doesn't fire along the grenade drag direction.
+    tc.beginGrenade(840, 600);
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.buttons & BTN.FIRE).toBe(0);
+    expect(inp.buttons & BTN.THROW).toBe(BTN.THROW);
+  });
 });
 
 describe('TouchControls grenade drag-arc', () => {
