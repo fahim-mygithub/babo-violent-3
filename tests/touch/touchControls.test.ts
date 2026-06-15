@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { TouchControls } from '../../src/touch/touchControls';
 import { InputManager } from '../../src/input';
-import { emptyInput } from '../../src/sim/types';
+import { BTN, emptyInput } from '../../src/sim/types';
 
 let tc: TouchControls;
 afterEach(() => tc?.dispose());
@@ -65,6 +65,35 @@ describe('TouchControls left stick → movement', () => {
     const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
     expect(inp.mx).toBe(0);
     expect(inp.my).toBe(0);
+  });
+});
+
+describe('TouchControls right stick → aim + autofire', () => {
+  it('sets aim=atan2(dy,dx) and BTN.FIRE while deflected, clears FIRE on release', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    // right zone: x in right ~55%, bottom 40%. jsdom innerWidth=1024, innerHeight=768
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    layer.dispatchEvent(pe('pointermove', 2, 800 + 40, 600)); // +x deflection
+    let inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.aim).toBeCloseTo(0, 3);           // atan2(0, +dx)
+    expect(inp.buttons & BTN.FIRE).toBe(BTN.FIRE);
+    expect(tc.aimActive).toBe(true);
+    layer.dispatchEvent(pe('pointerup', 2, 840, 600));
+    inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.buttons & BTN.FIRE).toBe(0);
+    expect(tc.aimActive).toBe(false);
+  });
+
+  it('does NOT fire below AIM_DEADZONE deflection', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    layer.dispatchEvent(pe('pointermove', 2, 805, 600)); // 5px / 56 ≈ 0.09 < 0.25
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.buttons & BTN.FIRE).toBe(0);
   });
 });
 

@@ -38,6 +38,10 @@ export class TouchControls implements InputSource {
   private leftOX = 0;
   private leftOY = 0;
 
+  private rightId = -1;
+  private rightOX = 0;
+  private rightOY = 0;
+
   constructor(private container: HTMLElement, private localId: number) {
     this.layer = document.createElement('div');
     this.layer.id = 'touch-layer';
@@ -53,10 +57,17 @@ export class TouchControls implements InputSource {
     e.preventDefault();
     const { w, h } = viewportSize();
     const inLeft = e.clientX < w * 0.45 && e.clientY > h * 0.5;
+    const inRight = e.clientX > w * 0.45 && e.clientY > h * 0.6;
     if (this.leftId === -1 && inLeft) {
       this.leftId = e.pointerId;
       this.leftOX = e.clientX;
       this.leftOY = e.clientY;
+      this.layer.setPointerCapture?.(e.pointerId);
+    } else if (this.rightId === -1 && inRight) {
+      this.rightId = e.pointerId;
+      this.rightOX = e.clientX;
+      this.rightOY = e.clientY;
+      this.aimActive = true;
       this.layer.setPointerCapture?.(e.pointerId);
     }
   };
@@ -74,6 +85,15 @@ export class TouchControls implements InputSource {
         this.moveX = (dx / mag) * m;
         this.moveY = (dy / mag) * m;
       }
+    } else if (e.pointerId === this.rightId) {
+      const dx = e.clientX - this.rightOX;
+      const dy = e.clientY - this.rightOY;
+      const mag = Math.hypot(dx, dy);
+      this.aimMag = Math.min(1, mag / AIM_STICK_R);
+      if (mag > 1e-6) this.aimAngle = Math.atan2(dy, dx);
+      // Autofire while deflected past the dead-zone. Gating by reload/heat/ammo
+      // is delegated to the sim weaponSystem; the touch layer only OR-s FIRE.
+      this.firing = this.aimMag > AIM_DEADZONE;
     }
   };
 
@@ -82,14 +102,24 @@ export class TouchControls implements InputSource {
       this.leftId = -1;
       this.moveX = 0;
       this.moveY = 0;
+    } else if (e.pointerId === this.rightId) {
+      this.rightId = -1;
+      this.aimActive = false;
+      this.firing = false;
+      this.aimMag = 0;
     }
   };
 
   sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
+    let buttons = 0;
+    if (this.firing) buttons |= BTN.FIRE;
+    const aimDist = this.aimActive
+      ? AIM_MIN_DIST + (AIM_MAX_DIST - AIM_MIN_DIST) * this.aimMag
+      : AIM_MIN_DIST;
     return {
       mx: this.moveX, my: this.moveY,
-      aim: this.aimAngle, aimDist: AIM_MIN_DIST,
-      buttons: 0, seq: this.seq++,
+      aim: this.aimAngle, aimDist,
+      buttons, seq: this.seq++,
     };
   }
 
