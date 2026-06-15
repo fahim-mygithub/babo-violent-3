@@ -85,6 +85,8 @@ export class TouchControls implements InputSource {
 
   /** SKILL button hold → BTN.ABILITY (supports hold-to-channel abilities). */
   private abilityHeld = false;
+  /** Captured pointer id for the SKILL hold (-1 when not held). */
+  private skillPointerId = -1;
 
   /** Edge buttons (SKILL/RELOAD/EQUIP/PICKUP/scoreboard/leave). Disposed with the layer. */
   private buttons: HTMLButtonElement[] = [];
@@ -100,9 +102,23 @@ export class TouchControls implements InputSource {
     this.layer.addEventListener('pointerup', this.onUp);
     this.layer.addEventListener('pointercancel', this.resetNeutral);
     window.addEventListener('blur', this.resetNeutral);
+    // Global fallback: if the SKILL hold's pointer is released anywhere off the
+    // button (slide-off, lost capture), drop BTN.ABILITY so it can't stick on.
+    window.addEventListener('pointerup', this.onGlobalPointerUp);
     document.addEventListener('visibilitychange', this.onVisibility);
     this.buildButtons();
   }
+
+  /** Clear the SKILL hold (button release, lost capture, or global fallback). */
+  private releaseSkill(): void {
+    this.abilityHeld = false;
+    this.skillPointerId = -1;
+  }
+
+  /** Window-level safety net: a pointerup matching the SKILL hold clears it. */
+  private onGlobalPointerUp = (e: PointerEvent): void => {
+    if (this.skillPointerId !== -1 && e.pointerId === this.skillPointerId) this.releaseSkill();
+  };
 
   /**
    * Edge buttons live inside #touch-layer but `stopPropagation` so the layer's
@@ -125,10 +141,16 @@ export class TouchControls implements InputSource {
     skill.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
       this.abilityHeld = true;
+      this.skillPointerId = e.pointerId;
+      // Capture so the matching pointerup lands on the button even if the thumb
+      // slides off; the window-level fallback below covers the (jsdom / capture
+      // loss) cases where it doesn't, so BTN.ABILITY can never stick on.
+      skill.setPointerCapture?.(e.pointerId);
     });
-    const releaseSkill = (e: PointerEvent): void => { e.stopPropagation(); this.abilityHeld = false; };
+    const releaseSkill = (e: PointerEvent): void => { e.stopPropagation(); this.releaseSkill(); };
     skill.addEventListener('pointerup', releaseSkill);
     skill.addEventListener('pointercancel', releaseSkill);
+    skill.addEventListener('lostpointercapture', () => this.releaseSkill());
 
     const reload = make('tc-reload', 'RELOAD');
     reload.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.tapReload(); });
@@ -309,6 +331,7 @@ export class TouchControls implements InputSource {
     this.reloadLatch = false;
     this.pickupLatch = false;
     this.abilityHeld = false;
+    this.skillPointerId = -1;
     this.grenBtnId = -1;
     this.leftId = -1;
     this.rightId = -1;
@@ -352,6 +375,7 @@ export class TouchControls implements InputSource {
     this.layer.removeEventListener('pointerup', this.onUp);
     this.layer.removeEventListener('pointercancel', this.resetNeutral);
     window.removeEventListener('blur', this.resetNeutral);
+    window.removeEventListener('pointerup', this.onGlobalPointerUp);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.layer.remove();
   }

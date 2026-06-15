@@ -210,6 +210,19 @@ describe('TouchControls buttons + detection', () => {
     expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.ABILITY).toBe(0);
   });
 
+  it('SKILL hold clears when the thumb slides off (pointerup on a different element)', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const skill = c.querySelector('#tc-skill') as HTMLElement;
+    skill.dispatchEvent(pe('pointerdown', 9, 980, 400));
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.ABILITY).toBe(BTN.ABILITY);
+    // Thumb slid off SKILL → pointerup delivered elsewhere (not the skill button).
+    // Without a global fallback the captured pointer's release is missed and
+    // BTN.ABILITY sticks on forever.
+    window.dispatchEvent(pe('pointerup', 9, 200, 700));
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.ABILITY).toBe(0);
+  });
+
   it('pointerdown on a button does not start the aim stick', () => {
     const c = mount();
     tc = new TouchControls(c, 1);
