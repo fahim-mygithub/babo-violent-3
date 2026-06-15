@@ -199,6 +199,47 @@ describe('TouchControls latches + neutral reset', () => {
   });
 });
 
+describe('TouchControls buttons + detection', () => {
+  it('SKILL button holds BTN.ABILITY while pressed, drops on release', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const skill = c.querySelector('#tc-skill') as HTMLElement;
+    skill.dispatchEvent(pe('pointerdown', 3, 980, 400));
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.ABILITY).toBe(BTN.ABILITY);
+    skill.dispatchEvent(pe('pointerup', 3, 980, 400));
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.ABILITY).toBe(0);
+  });
+
+  it('pointerdown on a button does not start the aim stick', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const reload = c.querySelector('#tc-reload') as HTMLElement;
+    reload.dispatchEvent(pe('pointerdown', 4, 980, 500));
+    expect(tc.aimActive).toBe(false);
+  });
+
+  it('scoreboard toggle flips showScores', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const sb = c.querySelector('#tc-scores') as HTMLElement;
+    sb.dispatchEvent(pe('pointerdown', 5, 512, 30));
+    expect(tc.showScores).toBe(true);
+    sb.dispatchEvent(pe('pointerdown', 5, 512, 30));
+    expect(tc.showScores).toBe(false);
+  });
+});
+
+describe('shouldUseTouch', () => {
+  it('respects an explicit on/off localStorage override', async () => {
+    const { shouldUseTouch } = await import('../../src/touch/touchControls');
+    localStorage.setItem('bv3-touch', 'on');
+    expect(shouldUseTouch()).toBe(true);
+    localStorage.setItem('bv3-touch', 'off');
+    expect(shouldUseTouch()).toBe(false);
+    localStorage.removeItem('bv3-touch');
+  });
+});
+
 describe('S8.4 desktop non-regression: dormant TouchControls does not perturb InputManager', () => {
   it('constructed TouchControls leaves InputManager.sample byte-identical', () => {
     // Capture InputManager.sample output with NO TouchControls present.

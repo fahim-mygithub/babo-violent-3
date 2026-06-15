@@ -30,9 +30,27 @@ const ASSIST = { CONE: 0.30, STRENGTH: 0.30, RANGE: 22 } as const;
  *
  * Left half (bottom) is a floating-origin movement stick → mx/my.
  */
+/**
+ * Touch-effective detection (S1.12). An explicit `bv3-touch` localStorage value
+ * (`on`/`off`) wins; otherwise auto-detect a coarse, hover-less pointer (phone /
+ * tablet). On desktop (no coarse pointer) this is false, so the App keeps the
+ * kbm source and never builds the touch layer.
+ */
+export function shouldUseTouch(): boolean {
+  const pref = localStorage.getItem('bv3-touch') ?? 'auto';
+  if (pref === 'on') return true;
+  if (pref === 'off') return false;
+  const coarse = typeof matchMedia === 'function'
+    && matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches;
+  return !!coarse;
+}
+
 export class TouchControls implements InputSource {
   enabled = true;
   showScores = false;
+
+  /** App callback for the LEAVE button (returns to the menu). */
+  onLeave?: () => void;
 
   // Read-state for renderer/HUD
   aimActive = false;
@@ -65,6 +83,13 @@ export class TouchControls implements InputSource {
   private reloadLatch = false;
   private pickupLatch = false;
 
+  /** SKILL button hold → BTN.ABILITY (supports hold-to-channel abilities). */
+  private abilityHeld = false;
+
+  /** Edge buttons (SKILL/RELOAD/EQUIP/PICKUP/scoreboard/leave). Disposed with the layer. */
+  private buttons: HTMLButtonElement[] = [];
+  private grenBtnId = -1;
+
   constructor(private container: HTMLElement, private localId: number) {
     this.layer = document.createElement('div');
     this.layer.id = 'touch-layer';
@@ -76,6 +101,75 @@ export class TouchControls implements InputSource {
     this.layer.addEventListener('pointercancel', this.resetNeutral);
     window.addEventListener('blur', this.resetNeutral);
     document.addEventListener('visibilitychange', this.onVisibility);
+    this.buildButtons();
+  }
+
+  /**
+   * Edge buttons live inside #touch-layer but `stopPropagation` so the layer's
+   * stick handlers never see them. `touch-action: manipulation` kills the
+   * double-tap-zoom delay without disabling the press itself.
+   */
+  private buildButtons(): void {
+    const make = (id: string, label: string): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.id = id;
+      b.className = 'tc-btn';
+      b.textContent = label;
+      b.style.touchAction = 'manipulation';
+      this.layer.appendChild(b);
+      this.buttons.push(b);
+      return b;
+    };
+
+    const skill = make('tc-skill', 'SKILL');
+    skill.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      this.abilityHeld = true;
+    });
+    const releaseSkill = (e: PointerEvent): void => { e.stopPropagation(); this.abilityHeld = false; };
+    skill.addEventListener('pointerup', releaseSkill);
+    skill.addEventListener('pointercancel', releaseSkill);
+
+    const reload = make('tc-reload', 'RELOAD');
+    reload.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.tapReload(); });
+
+    const pickup = make('tc-pickup', 'PICKUP');
+    // Visible only while a pickup prompt is live (App toggles via setPickupVisible).
+    pickup.style.display = 'none';
+    pickup.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.tapPickup(); });
+
+    const equip = make('tc-equip', 'EQUIP');
+    equip.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      this.grenBtnId = e.pointerId;
+      this.beginGrenade(e.clientX, e.clientY);
+      equip.setPointerCapture?.(e.pointerId);
+    });
+    equip.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.grenBtnId) return;
+      e.stopPropagation();
+      this.moveGrenade(e.clientX, e.clientY);
+    });
+    const endGren = (e: PointerEvent): void => {
+      if (e.pointerId !== this.grenBtnId) return;
+      e.stopPropagation();
+      this.grenBtnId = -1;
+      this.endGrenade();
+    };
+    equip.addEventListener('pointerup', endGren);
+    equip.addEventListener('pointercancel', endGren);
+
+    const scores = make('tc-scores', 'SCORE');
+    scores.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.showScores = !this.showScores; });
+
+    const leave = make('tc-leave', 'LEAVE');
+    leave.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.onLeave?.(); });
+  }
+
+  /** Show/hide the PICKUP button — App drives this from the live HUD pickup prompt. */
+  setPickupVisible(on: boolean): void {
+    const pk = this.layer.querySelector<HTMLElement>('#tc-pickup');
+    if (pk) pk.style.display = on ? '' : 'none';
   }
 
   private onDown = (e: PointerEvent): void => {
@@ -214,6 +308,8 @@ export class TouchControls implements InputSource {
     this.grenadeArc.active = false;
     this.reloadLatch = false;
     this.pickupLatch = false;
+    this.abilityHeld = false;
+    this.grenBtnId = -1;
     this.leftId = -1;
     this.rightId = -1;
   };
@@ -225,6 +321,7 @@ export class TouchControls implements InputSource {
   sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
     let buttons = 0;
     if (this.firing) buttons |= BTN.FIRE;
+    if (this.abilityHeld) buttons |= BTN.ABILITY;
     // Aim-assist is on by default; explicit `false` (a settings toggle, S1.6)
     // disables it. Read defensively so headless tests keep assist on.
     const assistOn = (window as { __bv3?: { touchAssist?: boolean } }).__bv3?.touchAssist !== false;
