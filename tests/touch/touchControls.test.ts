@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { TouchControls } from '../../src/touch/touchControls';
 import { InputManager } from '../../src/input';
 import { BTN, emptyInput } from '../../src/sim/types';
+import { angleDiff } from '../../src/core/math';
 
 let tc: TouchControls;
 afterEach(() => tc?.dispose());
@@ -94,6 +95,52 @@ describe('TouchControls right stick → aim + autofire', () => {
     layer.dispatchEvent(pe('pointermove', 2, 805, 600)); // 5px / 56 ≈ 0.09 < 0.25
     const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
     expect(inp.buttons & BTN.FIRE).toBe(0);
+  });
+});
+
+function worldWith(targets: { id: number; x: number; y: number; team?: number }[]) {
+  return {
+    players: [
+      { id: 1, x: 0, y: 0, team: -1, alive: true },
+      ...targets.map((t) => ({ id: t.id, x: t.x, y: t.y, team: t.team ?? -1, alive: true })),
+    ],
+  } as any;
+}
+
+describe('TouchControls aim-assist', () => {
+  it('nudges aim toward a target inside the cone but never past it (capped strength)', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    tc.setWorld(worldWith([{ id: 2, x: 10, y: 0 }]), 1); // target dead +x (ang 0)
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    // raw aim ~0.1 rad off the target (within 0.30 cone)
+    layer.dispatchEvent(pe('pointermove', 2, 800 + 40 * Math.cos(0.1), 600 + 40 * Math.sin(0.1)));
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    // assisted aim is between raw (0.1) and target (0): nudged toward 0, not snapped
+    expect(inp.aim).toBeGreaterThan(0);
+    expect(inp.aim).toBeLessThan(0.1);
+  });
+
+  it('does not assist outside the cone or onto teammates', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    tc.setWorld(worldWith([{ id: 2, x: 0, y: 10, team: -1 }]), 1); // target at +y (ang PI/2)
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    layer.dispatchEvent(pe('pointermove', 2, 840, 600)); // raw aim ~0, target far outside cone
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(Math.abs(inp.aim)).toBeLessThan(0.05); // unchanged
+  });
+
+  it('tolerates an unset/null world (no players) without throwing', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    tc.setWorld(null, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    layer.dispatchEvent(pe('pointermove', 2, 840, 600));
+    expect(() => tc.sample({ x: 0, y: 0 }, 0, 0)).not.toThrow();
   });
 });
 

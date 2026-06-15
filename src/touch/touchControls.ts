@@ -12,6 +12,15 @@ const AIM_MIN_DIST = 3;
 const AIM_MAX_DIST = 16;
 
 /**
+ * Aim-assist (S1.6). Soft angular magnetism only — STRENGTH is capped at 0.30 so
+ * the producer can never snap onto a target, only nudge toward it. Lead is
+ * intentionally NOT applied (rotate-to-target only); the Lance is additionally
+ * lead-exempt by contract (S2.5) so it stays correct by construction if lead
+ * ever lands.
+ */
+const ASSIST = { CONE: 0.30, STRENGTH: 0.30, RANGE: 22 } as const;
+
+/**
  * Touch input producer (mobile). Implements the same {@link InputSource} surface
  * as the desktop {@link InputManager} so the game loop can swap producers without
  * any sim change. A constructed-but-idle TouchControls emits a neutral input.
@@ -33,6 +42,9 @@ export class TouchControls implements InputSource {
   private seq = 1;
   private moveX = 0;
   private moveY = 0;
+
+  /** Latest world view for aim-assist. Null until setWorld is called. */
+  private view: { players: PlayerState[] } | null = null;
 
   private leftId = -1;
   private leftOX = 0;
@@ -110,15 +122,59 @@ export class TouchControls implements InputSource {
     }
   };
 
+  /** Feed the current world view + local player id for aim-assist. */
+  setWorld(view: { players: Iterable<PlayerState> } | null, localId: number): void {
+    this.view = view ? { players: [...view.players] } : null;
+    this.localId = localId;
+  }
+
+  /**
+   * Soft angular magnetism toward the nearest hostile inside the assist cone +
+   * range. Never snaps (STRENGTH ≤ 0.30) and never leads (rotate-to-target
+   * only). Pure: no allocation, tolerant of an unset/empty world.
+   */
+  private assist(rawAim: number): number {
+    const v = this.view;
+    if (!v) return rawAim;
+    let me: PlayerState | undefined;
+    for (const p of v.players) if (p.id === this.localId) { me = p; break; }
+    if (!me) return rawAim;
+    const px = me.x;
+    const py = me.y;
+    let bestErr: number = ASSIST.CONE;
+    let bestAng = 0;
+    let found = false;
+    for (const e of v.players) {
+      if (!e.alive || e.id === this.localId) continue;
+      if (me.team !== -1 && e.team === me.team) continue; // never assist onto teammates
+      const dx = e.x - px;
+      const dy = e.y - py;
+      if (Math.hypot(dx, dy) > ASSIST.RANGE) continue;
+      const ang = Math.atan2(dy, dx);
+      const err = Math.abs(angleDiff(rawAim, ang));
+      if (err < bestErr) { bestErr = err; bestAng = ang; found = true; }
+    }
+    if (!found) return rawAim;
+    // Lance lead-skip contract (S2.5): lead is NOT applied here. Lead is a no-op
+    // in P2 (rotate-to-target only); when it lands the Lance stays lead-exempt
+    // because its hitscan needs no lead. Kept explicit so it's correct by
+    // construction.
+    return rawAim + angleDiff(rawAim, bestAng) * ASSIST.STRENGTH * (1 - bestErr / ASSIST.CONE);
+  }
+
   sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
     let buttons = 0;
     if (this.firing) buttons |= BTN.FIRE;
     const aimDist = this.aimActive
       ? AIM_MIN_DIST + (AIM_MAX_DIST - AIM_MIN_DIST) * this.aimMag
       : AIM_MIN_DIST;
+    // Aim-assist is on by default; explicit `false` (a settings toggle, S1.6)
+    // disables it. Read defensively so headless tests keep assist on.
+    const assistOn = (window as { __bv3?: { touchAssist?: boolean } }).__bv3?.touchAssist !== false;
+    const aim = assistOn ? this.assist(this.aimAngle) : this.aimAngle;
     return {
       mx: this.moveX, my: this.moveY,
-      aim: this.aimAngle, aimDist,
+      aim, aimDist,
       buttons, seq: this.seq++,
     };
   }
