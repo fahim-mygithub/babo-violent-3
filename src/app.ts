@@ -16,6 +16,7 @@ import type { LobbyPreview } from './render/lobbyPreview';
 import { InputManager } from './input';
 import type { InputSource } from './input';
 import { TouchControls, shouldUseTouch } from './touch/touchControls';
+import { viewportSize, onViewportChange } from './core/viewport';
 import { AudioEngine } from './audio/audio';
 import { UI, type LobbyConfig, type LobbyViewPlayer } from './ui/screens';
 import type { HostSession } from './net/host';
@@ -67,6 +68,8 @@ export class App {
   private lastSettings: MatchSettings | null = null;
   // Screen Wake Lock sentinel; null when unheld (auto-released on hide → re-acquired).
   private wakeLock: { release?: () => Promise<void> } | null = null;
+  // Viewport-change unsubscribe for the touch camera scalars (orientation flip).
+  private viewportUnsub: (() => void) | null = null;
 
   constructor(private container: HTMLElement) {
     (window as unknown as { __bv3: App }).__bv3 = this; // debug/test handle
@@ -465,6 +468,20 @@ export class App {
       this.activeSource = this.kbm;
     }
 
+    // Touch camera (S1.13): zoom out 1.25× in portrait so the cramped vertical
+    // FOV still shows the fight; damp the aim-lead so the auto-fire stick doesn't
+    // yank the camera. On desktop useTouch is false → scalars stay 1/0/1 (camera
+    // byte-unchanged). Recompute on every orientation/URL-bar flip.
+    const applyTouchCam = (): void => {
+      if (!this.renderer) return;
+      const { w, h } = viewportSize();
+      const isPortrait = h > w;
+      this.renderer.aimLeadScale = this.useTouch ? 0.35 : 1;
+      this.renderer.camDistScale = (this.useTouch && isPortrait) ? 1.25 : 1;
+    };
+    applyTouchCam();
+    this.viewportUnsub = onViewportChange(applyTouchCam);
+
     this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, this.role === 'host');
     this.loop.start();
     void this.acquireWakeLock();
@@ -638,6 +655,8 @@ export class App {
 
   private teardownMatch(): void {
     this.releaseWakeLock();
+    this.viewportUnsub?.();
+    this.viewportUnsub = null;
     this.loop?.stop();
     this.loop = null;
     this.renderer?.dispose();
