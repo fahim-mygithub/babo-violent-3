@@ -29,4 +29,22 @@ describe('ShadowInstances', () => {
     expect(pos.x).toBeCloseTo(3, 6);
     expect(pos.z).toBeCloseTo(4, 6);
   });
+
+  // InstancedMesh caches its bounding sphere on the first frustum check and
+  // setMatrixAt never invalidates it; with culling ON, once the babos roam far
+  // from the origin-centred initial bounds the WHOLE shadow mesh culls out on
+  // every tier. frustumCulled MUST be false so the contact shadows always draw.
+  it('disables frustum culling so a far-roaming instance never culls the whole mesh', () => {
+    const s = new ShadowInstances();
+    s.set(0, 500, 500, true); // far from the origin-centred initial bounds
+    expect(s.mesh.frustumCulled).toBe(false);
+  });
+
+  // Desktop byte-identity: main's per-babo shadow used the default depthWrite
+  // (true). The instanced material must match — NO depthWrite:false override.
+  it('shadow material keeps default depthWrite (parity with main, no depthWrite:false)', () => {
+    const s = new ShadowInstances();
+    const mat = s.mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.depthWrite).toBe(true);
+  });
 });

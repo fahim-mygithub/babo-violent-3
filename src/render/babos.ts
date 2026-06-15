@@ -58,8 +58,14 @@ export class ShadowInstances {
 
   constructor() {
     const geo = new CircleGeometry(C.BABO_RADIUS * 1.1, 20);
-    const mat = new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
+    // Default depthWrite (true) matches main's old per-babo shadow material →
+    // desktop byte-identical render-pass ordering.
+    const mat = new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
     this.mesh = new InstancedMesh(geo, mat, MAX_PLAYERS);
+    // InstancedMesh caches its bounding sphere on the first frustum check and
+    // setMatrixAt never invalidates it — with culling on, the whole shadow mesh
+    // culls out once the babos roam past the origin-centred initial bounds.
+    this.mesh.frustumCulled = false;
     for (let i = 0; i < MAX_PLAYERS; i++) this.set(i, 0, 0, false);
   }
 
