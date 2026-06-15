@@ -66,4 +66,14 @@ export const C = {
 
   // Bots
   BOT_NAMES: ['Crusher', 'Gibs', 'Rolo', 'Hemo', 'Splat', 'Maul', 'Vex', 'Plasma', 'Tank', 'Drip'],
+
+  // --- Sim flag scaffolding (inert; consumed by later phases) -------------
+  /** Per-babo continuous collision detection (sim.ts:139). false → drop CCD (S5.2a, D-SHIFT). */
+  PLAYER_CCD: true,
+  /** D-SHIFT bundle version (distSq swaps + CCD). Bump re-baselines the golden hash (S5.1d/S5.8). */
+  SIM_BASELINE_V: 1,
+  /** Per-tick projectile cap; grief/lag-spam guard, drops oldest BULLET only (S2.7). */
+  MAX_PROJECTILES: 256,
+  /** Global concurrent WebAudio voice ceiling (S5.7c). */
+  AUDIO_MAX_VOICES: 24,
 } as const;
