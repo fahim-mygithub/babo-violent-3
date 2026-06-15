@@ -65,6 +65,20 @@ describe('surfaceMat', () => {
     expect(m.emissive.getHex()).toBe(0x40c0ff);
   });
 
+  it('mid carries emissive + emissiveIntensity (Lambert supports both)', () => {
+    setTierOverride('mid');
+    const m = surfaceMat({ color: 0x202020, emissive: 0x40c0ff, emissiveIntensity: 0.7 }) as THREE.MeshLambertMaterial;
+    expect(m).toBeInstanceOf(THREE.MeshLambertMaterial);
+    expect(m.emissive.getHex()).toBe(0x40c0ff);
+    expect(m.emissiveIntensity).toBe(0.7); // NOT dropped — Lambert is not PBR but does have emissiveIntensity
+  });
+
+  it('mid leaves emissiveIntensity at the Lambert default (1) when unset', () => {
+    setTierOverride('mid');
+    const m = surfaceMat({ color: 0x202020, emissive: 0x40c0ff }) as THREE.MeshLambertMaterial;
+    expect(m.emissiveIntensity).toBe(1);
+  });
+
   it('low-tier glow-like input folds emissive into the base colour (no emissive on Basic)', () => {
     setTierOverride('low');
     const m = surfaceMat({ color: 0x101010, emissive: 0x40c0ff, emissiveIntensity: 0.9 }) as THREE.MeshBasicMaterial;

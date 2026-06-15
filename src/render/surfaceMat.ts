@@ -28,7 +28,8 @@ export interface SurfaceParams {
   roughness?: number;
   /** Standard-only; preserved on high, DROPPED on Lambert/Basic. */
   metalness?: number;
-  /** Standard-only emissive boost; preserved on high, DROPPED below. */
+  /** Emissive boost; preserved on high (Standard) AND mid (Lambert), DROPPED on
+   *  low (Basic is unlit — emissive folds into the base colour). */
   emissiveIntensity?: number;
 }
 
@@ -55,12 +56,15 @@ export function surfaceMat(p: SurfaceParams): Material {
     return new MeshStandardMaterial({ ...p });
   }
   if (QUALITY.tier === 'mid') {
-    // Lambertize: cheap diffuse lighting; KEEP color/emissive + carried props;
-    // DROP metalness/roughness/emissiveIntensity (no PBR on Lambert). Only spread
-    // color/emissive when set so three.js doesn't warn on an explicit undefined.
+    // Lambertize: cheap diffuse lighting; KEEP color/emissive/emissiveIntensity +
+    // carried props; DROP only the PBR-exclusive metalness/roughness. Lambert is
+    // not PBR but DOES support emissive + emissiveIntensity, so carry the latter
+    // (energy guns/cores keep their glow strength). Only spread set fields so
+    // three.js doesn't warn on an explicit undefined.
     const params: ConstructorParameters<typeof MeshLambertMaterial>[0] = { ...carry(p) };
     if (p.color !== undefined) params.color = p.color;
     if (p.emissive !== undefined) params.emissive = p.emissive;
+    if (p.emissiveIntensity !== undefined) params.emissiveIntensity = p.emissiveIntensity;
     return new MeshLambertMaterial(params);
   }
   // Basicize (low): unlit. Fold emissive→color (the glow shows through with no
