@@ -1,7 +1,8 @@
 import { BoxGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, Object3D, SphereGeometry, TorusGeometry } from 'three';
 import type { GunId } from '../data/weapons';
 import { GUNS } from '../data/weapons';
-import { QUALITY, surfaceMat } from './quality';
+import { QUALITY } from './quality';
+import { surfaceMat } from './surfaceMat';
 
 /**
  * Low-poly held-weapon models + lobby selector icons, built entirely from

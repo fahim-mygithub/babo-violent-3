@@ -1,7 +1,8 @@
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Material, Mesh, Object3D, OctahedronGeometry, SphereGeometry, TorusGeometry } from 'three';
 import type { ClassId } from '../data/classes';
 import { CLASSES } from '../data/classes';
-import { QUALITY, surfaceMat } from './quality';
+import { QUALITY } from './quality';
+import { surfaceMat } from './surfaceMat';
 
 /**
  * Per-class visual identity ACCESSORIES for the faceless Babo marble.

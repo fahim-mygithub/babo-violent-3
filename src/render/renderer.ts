@@ -9,7 +9,8 @@ import { BaboPool } from './babos';
 import { EffectsLayer } from './effects';
 import { laserLength } from './aimLaser';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { QUALITY, surfaceMat } from './quality';
+import { QUALITY } from './quality';
+import { surfaceMat } from './surfaceMat';
 import { SplatMap } from './splatmap';
 import { makeFloorTexture, makeWallTexture } from './textures';
 

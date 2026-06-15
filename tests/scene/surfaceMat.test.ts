@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { surfaceMat, setTierOverride } from '../../src/render/quality';
+import { setTierOverride } from '../../src/render/quality';
+import { surfaceMat } from '../../src/render/surfaceMat';
 
 afterEach(() => setTierOverride('high'));
 

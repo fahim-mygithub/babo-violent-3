@@ -2,7 +2,8 @@ import { AdditiveBlending, Blending, BoxGeometry, CircleGeometry, ConeGeometry, 
 import { C } from '../data/constants';
 import { GUNS } from '../data/weapons';
 import { EQUIPMENT } from '../data/equipment';
-import { QUALITY, surfaceMat } from './quality';
+import { QUALITY } from './quality';
+import { surfaceMat } from './surfaceMat';
 
 /**
  * Scale a transient particle-burst count by the live quality tier, never below 1
