@@ -163,6 +163,42 @@ describe('TouchControls grenade drag-arc', () => {
   });
 });
 
+describe('TouchControls latches + neutral reset', () => {
+  it('RELOAD tap emits BTN.RELOAD exactly once even across two samples', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    tc.tapReload();
+    const a = tc.sample({ x: 0, y: 0 }, 0, 0);
+    const b = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(a.buttons & BTN.RELOAD).toBe(BTN.RELOAD);
+    expect(b.buttons & BTN.RELOAD).toBe(0);
+  });
+
+  it('PICKUP tap emits BTN.PICKUP exactly once', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    tc.tapPickup();
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.PICKUP).toBe(BTN.PICKUP);
+    expect(tc.sample({ x: 0, y: 0 }, 0, 0).buttons & BTN.PICKUP).toBe(0);
+  });
+
+  it('blur resets all state: next sample is neutral (buttons 0, mx=my=0)', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    layer.dispatchEvent(pe('pointerdown', 1, 100, 600));
+    layer.dispatchEvent(pe('pointermove', 1, 156, 656));
+    layer.dispatchEvent(pe('pointerdown', 2, 800, 600));
+    layer.dispatchEvent(pe('pointermove', 2, 840, 600));
+    tc.tapReload();
+    window.dispatchEvent(new Event('blur'));
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.buttons).toBe(0);
+    expect(inp.mx).toBe(0);
+    expect(inp.my).toBe(0);
+  });
+});
+
 describe('S8.4 desktop non-regression: dormant TouchControls does not perturb InputManager', () => {
   it('constructed TouchControls leaves InputManager.sample byte-identical', () => {
     // Capture InputManager.sample output with NO TouchControls present.

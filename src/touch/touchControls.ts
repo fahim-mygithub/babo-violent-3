@@ -60,6 +60,11 @@ export class TouchControls implements InputSource {
   private grenOX = 0;
   private grenOY = 0;
 
+  // Consume-on-first-sample latches: a tap sets the bit; sample() emits it once
+  // then clears it, so each tap fires at most one bit regardless of ticks/frame.
+  private reloadLatch = false;
+  private pickupLatch = false;
+
   constructor(private container: HTMLElement, private localId: number) {
     this.layer = document.createElement('div');
     this.layer.id = 'touch-layer';
@@ -68,7 +73,9 @@ export class TouchControls implements InputSource {
     this.layer.addEventListener('pointerdown', this.onDown);
     this.layer.addEventListener('pointermove', this.onMove);
     this.layer.addEventListener('pointerup', this.onUp);
-    this.layer.addEventListener('pointercancel', this.onUp);
+    this.layer.addEventListener('pointercancel', this.resetNeutral);
+    window.addEventListener('blur', this.resetNeutral);
+    document.addEventListener('visibilitychange', this.onVisibility);
   }
 
   private onDown = (e: PointerEvent): void => {
@@ -192,6 +199,29 @@ export class TouchControls implements InputSource {
     this.grenadeArc.active = false;
   }
 
+  /** Tap RELOAD: latched, consumed on the next sample (one emit per tap). */
+  tapReload(): void { this.reloadLatch = true; }
+  /** Tap PICKUP: latched, consumed on the next sample (one emit per tap). */
+  tapPickup(): void { this.pickupLatch = true; }
+
+  /** Zero every input + latch — blur/pointercancel/visibility-hidden recovery. */
+  private resetNeutral = (): void => {
+    this.moveX = 0;
+    this.moveY = 0;
+    this.aimActive = false;
+    this.firing = false;
+    this.aimMag = 0;
+    this.grenadeArc.active = false;
+    this.reloadLatch = false;
+    this.pickupLatch = false;
+    this.leftId = -1;
+    this.rightId = -1;
+  };
+
+  private onVisibility = (): void => {
+    if (document.hidden) this.resetNeutral();
+  };
+
   sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
     let buttons = 0;
     if (this.firing) buttons |= BTN.FIRE;
@@ -209,6 +239,9 @@ export class TouchControls implements InputSource {
       aim = this.grenadeArc.aim;
       aimDist = this.grenadeArc.dist;
     }
+    // Consume-on-first-sample: emit each tapped bit at most once.
+    if (this.reloadLatch) { buttons |= BTN.RELOAD; this.reloadLatch = false; }
+    if (this.pickupLatch) { buttons |= BTN.PICKUP; this.pickupLatch = false; }
     return {
       mx: this.moveX, my: this.moveY,
       aim, aimDist,
@@ -220,7 +253,9 @@ export class TouchControls implements InputSource {
     this.layer.removeEventListener('pointerdown', this.onDown);
     this.layer.removeEventListener('pointermove', this.onMove);
     this.layer.removeEventListener('pointerup', this.onUp);
-    this.layer.removeEventListener('pointercancel', this.onUp);
+    this.layer.removeEventListener('pointercancel', this.resetNeutral);
+    window.removeEventListener('blur', this.resetNeutral);
+    document.removeEventListener('visibilitychange', this.onVisibility);
     this.layer.remove();
   }
 }
