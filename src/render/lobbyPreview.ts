@@ -291,6 +291,9 @@ export class LobbyPreview {
           update: (k) => {
             const p = Math.sin(k * Math.PI);
             u.uOpacity.value = 1 - 0.8 * p;
+            // The body shader is opaque by default (S3.4); engage blending while the
+            // phantom demo fades it, mirroring the in-match phase guard.
+            this.mat.transparent = p > 0;
             this.setGunOpacity(1 - 0.8 * p); // fade the held gun with the body
             const gm = ghost.material as MeshBasicMaterial;
             gm.opacity = 0.3 * p;
@@ -333,6 +336,7 @@ export class LobbyPreview {
     const u = this.mat.uniforms as unknown as BaboUniforms;
     u.uFortify.value = 0;
     u.uOpacity.value = 1;
+    this.mat.transparent = false; // back to the opaque default once the phase demo ends
     this.setGunOpacity(1);
     if (this.demo) for (const m of this.demo.meshes) m.visible = false;
   }

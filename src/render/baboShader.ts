@@ -98,12 +98,20 @@ export interface BaboUniforms {
   uOpacity: { value: number };
 }
 
-/** A fresh Babo ShaderMaterial. `centerY`/`radius` default to the in-game ball. */
+/**
+ * A fresh Babo ShaderMaterial. `centerY`/`radius` default to the in-game ball.
+ *
+ * Constructed OPAQUE (`transparent:false`): the body is fully opaque except during
+ * a Phantom phase, so paying for alpha blending + the transparent sort every frame
+ * is wasted on all tiers. The caller flips `mat.transparent` true on phase-in and
+ * false on phase-out (BaboPool's phase guard / the lobby phantom demo); the
+ * per-frame `uOpacity` write is untouched.
+ */
 export function makeBaboMaterial(color: number, centerY = 0.5, radius = 0.5): ShaderMaterial {
   return new ShaderMaterial({
     vertexShader: BABO_VERT,
     fragmentShader: BABO_FRAG,
-    transparent: true,
+    transparent: false,
     uniforms: {
       uColor: { value: new Color(color) },
       uHp: { value: 1 },

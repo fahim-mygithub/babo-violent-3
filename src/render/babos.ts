@@ -29,6 +29,16 @@ interface BaboVisual {
   nameTag: Sprite;
 }
 
+/**
+ * The new `transparent` flag for the babo body at a phase transition, or null when
+ * the phase state is unchanged (no GL state churn). The body is opaque by default
+ * (cheaper) and only goes transparent while a Phantom phase is active.
+ */
+export function phaseTransition(phaseActive: boolean, prevPhased: boolean): boolean | null {
+  if (phaseActive === prevPhased) return null;
+  return phaseActive;
+}
+
 /** BV2-style floating name tag (canvas-rendered, white with dark outline). */
 function makeNameSprite(name: string): Sprite {
   const c = document.createElement('canvas');
@@ -209,6 +219,12 @@ export class BaboPool {
       // Phase Shift fades the body shader; fade the held gun to match so it
       // doesn't float opaque beside a ghost body. Toggle only on transition.
       if (p.phaseActive !== vis.phased) {
+        // Flip the (otherwise opaque) body's transparency only at the phase edge —
+        // true on phase-in so uOpacity 0.32 actually blends, false on phase-out so
+        // the body is back on the cheap opaque path. The per-frame uOpacity write
+        // at :207 stays unconditional.
+        const t = phaseTransition(p.phaseActive, vis.phased);
+        if (t !== null) { vis.mat.transparent = t; vis.mat.needsUpdate = true; }
         vis.phased = p.phaseActive;
         setGroupOpacity(vis.gun, p.phaseActive ? 0.32 : 1);
       }
