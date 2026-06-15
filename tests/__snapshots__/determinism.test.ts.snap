@@ -1,0 +1,17 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`determinism golden guard > frozen golden hashes at ticks 300/600/1200 ('bounty'/11) 1`] = `
+{
+  "1200": "454df7d8000004b0",
+  "300": "0a4caee10000012c",
+  "600": "2271d86d00000258",
+}
+`;
+
+exports[`determinism golden guard > frozen golden hashes at ticks 300/600/1200 ('tdm'/23) 1`] = `
+{
+  "1200": "27e2990a000004b0",
+  "300": "24d165780000012c",
+  "600": "5a8e84bc00000258",
+}
+`;
