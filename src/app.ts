@@ -223,7 +223,7 @@ export class App {
   private prefetchMatchChunks(): void {
     if (this.prefetched) return;
     this.prefetched = true;
-    void import('@dimforge/rapier2d').catch(() => {});
+    void import('@dimforge/rapier2d-compat').catch(() => {});
     void import('./render/renderer').catch(() => {});
     void import('./render/hud').catch(() => {});
     void import('./render/screenfx').catch(() => {});

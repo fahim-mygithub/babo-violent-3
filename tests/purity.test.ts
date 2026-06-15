@@ -21,7 +21,7 @@ function allowed(spec: string): boolean {
   // data/runtime is render/input/net/shell scope only — never readable from sim.
   // Must precede the data/* allow below so it isn't swept in.
   if (/data\/runtime/.test(spec)) return false;
-  if (spec.startsWith('@dimforge/rapier2d')) return true;       // physics engine
+  if (spec.startsWith('@dimforge/rapier2d-compat')) return true; // physics engine
   if (/(^|\/)core(\/|$)/.test(spec) && spec.startsWith('.')) return true; // ../core, ./core
   if (/(^|\/)data(\/|$)/.test(spec) && spec.startsWith('.')) return true; // ../data, ./data
   // sibling sim modules: relative paths that don't escape into core/data/render/etc.
@@ -42,7 +42,7 @@ describe('sim purity allowlist contract', () => {
     expect(allowed('../data/constants')).toBe(true);
     expect(allowed('../data/classes')).toBe(true);
     expect(allowed('../core/math')).toBe(true);
-    expect(allowed('@dimforge/rapier2d')).toBe(true);
+    expect(allowed('@dimforge/rapier2d-compat')).toBe(true);
     expect(allowed('./systems/movement')).toBe(true);
   });
 });

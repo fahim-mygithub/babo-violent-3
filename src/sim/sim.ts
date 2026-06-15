@@ -1,4 +1,4 @@
-import type RAPIER_NS from '@dimforge/rapier2d';
+import type RAPIER_NS from '@dimforge/rapier2d-compat';
 import { dist, distSq, normInto, segAABB, segCircle } from '../core/math';
 import { RNG } from '../core/rng';
 import { C } from '../data/constants';
@@ -22,10 +22,10 @@ import { pickupSystem } from './systems/pickups';
 import { modeSystem } from './systems/modes';
 import { botSystem } from './systems/bots';
 
-// Lazily-bound runtime ref. The non-compat @dimforge/rapier2d ships a separate
-// .wasm (no base64 inline) and auto-instantiates on module import — it does NOT
-// expose init(). initPhysics() defensively handles both contracts so a future
-// package shape change (compat-style init()) keeps working.
+// Lazily-bound runtime ref. @dimforge/rapier2d-compat inlines its WASM as base64
+// and exposes an async init() that instantiates it. Because initPhysics() dynamic-
+// imports the compat module, rollup keeps it (WASM and all) in a deferred chunk —
+// the menu loads without Rapier. init() MUST complete before any World/Desc use.
 let RAPIER: typeof RAPIER_NS;
 
 let rapierReady = false;
@@ -36,9 +36,10 @@ export function initPhysics(): Promise<void> {
   if (rapierReady) return Promise.resolve();
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    const mod = await import('@dimforge/rapier2d');
-    if (typeof (mod as any).init === 'function') await (mod as any).init(); // compat-style if present
-    RAPIER = mod as unknown as typeof RAPIER_NS;                            // else auto-instantiated
+    const mod = await import('@dimforge/rapier2d-compat');
+    const R = mod.default ?? mod;
+    await R.init();
+    RAPIER = R;
     rapierReady = true;
   })().catch((e) => { initPromise = null; throw e; });                     // reset for retry
   return initPromise;

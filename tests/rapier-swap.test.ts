@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { makeSim } from './helpers';
 import { simHash } from './helpers';
 
-// The seed-42 byte-identical determinism gate for the @dimforge/rapier2d swap.
-// This MUST match the golden baseline captured by the Foundation determinism test
-// against the OLD -compat package. If it diverges, the swap is NOT byte-identical
-// and must not be merged (spec S4.1 acceptance gate / Risk #1).
+// The seed-42 byte-identical determinism gate for the @dimforge/rapier2d-compat
+// engine. The golden hash below is the original baseline captured by the Foundation
+// determinism test. compat@0.14.0 is the SAME engine version, so the hash MUST stay
+// byte-identical — if it diverges, something is wrong (spec S4.1 acceptance gate /
+// Risk #1). The describe label is kept stable so the golden snapshot key is unchanged.
 describe('rapier non-compat swap — determinism', () => {
   it('seed-42 8-bot TDM is byte-identical to the pre-swap golden hash', async () => {
     const a = await makeSim({ mode: 'tdm', seed: 42 });
