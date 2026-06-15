@@ -467,6 +467,7 @@ export class App {
     } else {
       this.activeSource = this.kbm;
     }
+    this.hud.touchMode = this.useTouch;
 
     // Touch camera (S1.13): zoom out 1.25× in portrait so the cramped vertical
     // FOV still shows the fight; damp the aim-lead so the auto-fire stick doesn't
@@ -576,6 +577,8 @@ export class App {
     }
     this.renderer.render(view, this.localId, frameDt);
     this.hud.update(view, this.localId, { x: this.kbm.mouseX, y: this.kbm.mouseY }, this.activeSource.showScores, frameDt);
+    // PICKUP button is shown only while the HUD pickup prompt is live (S1.7).
+    this.touch?.setPickupVisible(this.hud.pickupPromptActive);
     this.fx.update(local, frameDt);
     this.audio.update(local, frameDt);
 
