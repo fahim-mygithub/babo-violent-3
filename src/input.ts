@@ -1,10 +1,22 @@
 import { BTN, type PlayerInput } from './sim/types';
 
 /**
+ * Common surface for input producers (desktop {@link InputManager}, mobile
+ * TouchControls). The game loop depends only on this, so producers swap with no
+ * sim change.
+ */
+export interface InputSource {
+  enabled: boolean;
+  showScores: boolean;
+  sample(ground: { x: number; y: number }, px: number, py: number): PlayerInput;
+  dispose(): void;
+}
+
+/**
  * Keyboard + mouse → PlayerInput. Aim is resolved against the ground plane via
  * the renderer's unprojection, supplied per-sample.
  */
-export class InputManager {
+export class InputManager implements InputSource {
   private keys = new Set<string>();
   mouseX = window.innerWidth / 2;
   mouseY = window.innerHeight / 2;
