@@ -1,4 +1,5 @@
 import { C } from '../data/constants';
+import { viewportSize, onViewportChange } from '../core/viewport';
 import type { GameEvent, PlayerState } from '../sim/types';
 import type { WorldView } from './renderer';
 
@@ -14,6 +15,10 @@ export class ScreenFx {
   private splatters: Splatter[] = [];
   private hurtFlash = 0;
   private heartbeat = 0;
+  // CSS-px draw size. The canvas backing store is DPR-scaled; all draw code reads these.
+  private cssW = 0;
+  private cssH = 0;
+  private offViewport: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.canvas = document.createElement('canvas');
@@ -24,13 +29,20 @@ export class ScreenFx {
     container.appendChild(this.canvas);
     this.g = this.canvas.getContext('2d')!;
     this.resize();
-    window.addEventListener('resize', this.resize);
+    this.offViewport = onViewportChange(() => this.resize());
   }
 
-  private resize = (): void => {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
-  };
+  private resize(): void {
+    const { w, h } = viewportSize();
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    this.cssW = w;
+    this.cssH = h;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.canvas.style.width = `${w}px`;
+    this.canvas.style.height = `${h}px`;
+    this.g.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS px
+  }
 
   handleEvents(events: GameEvent[], localId: number, view: WorldView): void {
     let local: PlayerState | undefined;
@@ -46,8 +58,8 @@ export class ScreenFx {
   }
 
   private addSplatter(intensity: number, own: boolean): void {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.cssW;
+    const H = this.cssH;
     const count = Math.round(2 + intensity * 3) + (own ? 3 : 0);
     for (let i = 0; i < count; i++) {
       if (this.splatters.length >= 14) this.splatters.shift();
@@ -64,8 +76,8 @@ export class ScreenFx {
 
   update(local: PlayerState | undefined, dt: number): void {
     const g = this.g;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.cssW;
+    const H = this.cssH;
     g.clearRect(0, 0, W, H);
 
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
@@ -115,7 +127,8 @@ export class ScreenFx {
   }
 
   dispose(): void {
-    window.removeEventListener('resize', this.resize);
+    this.offViewport?.();
+    this.offViewport = null;
     this.canvas.remove();
   }
 }

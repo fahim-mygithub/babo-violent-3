@@ -1,4 +1,5 @@
 import { C } from '../data/constants';
+import { viewportSize, onViewportChange } from '../core/viewport';
 import { CLASSES } from '../data/classes';
 import { GUNS } from '../data/weapons';
 import { EQUIPMENT } from '../data/equipment';
@@ -22,6 +23,10 @@ export class Hud {
   private hitMarkerT = 0;
   private killMarkerT = 0;
   private leaderPulse = 0;
+  // CSS-px draw size. The canvas backing store is DPR-scaled; all draw code reads these.
+  private cssW = 0;
+  private cssH = 0;
+  private offViewport: (() => void) | null = null;
 
   constructor(
     container: HTMLElement,
@@ -35,13 +40,20 @@ export class Hud {
     container.appendChild(this.canvas);
     this.g = this.canvas.getContext('2d')!;
     this.resize();
-    window.addEventListener('resize', this.resize);
+    this.offViewport = onViewportChange(() => this.resize());
   }
 
-  private resize = (): void => {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
-  };
+  private resize(): void {
+    const { w, h } = viewportSize();
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    this.cssW = w;
+    this.cssH = h;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.canvas.style.width = `${w}px`;
+    this.canvas.style.height = `${h}px`;
+    this.g.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS px
+  }
 
   handleEvents(events: GameEvent[], localId: number, view: WorldView): void {
     const byId = new Map<number, PlayerState>();
@@ -85,8 +97,8 @@ export class Hud {
     showScores: boolean, dt: number,
   ): void {
     const g = this.g;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.cssW;
+    const H = this.cssH;
     g.clearRect(0, 0, W, H);
 
     let local: PlayerState | undefined;
@@ -428,7 +440,8 @@ export class Hud {
   }
 
   dispose(): void {
-    window.removeEventListener('resize', this.resize);
+    this.offViewport?.();
+    this.offViewport = null;
     this.canvas.remove();
   }
 }
