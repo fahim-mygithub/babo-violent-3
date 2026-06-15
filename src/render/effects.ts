@@ -12,6 +12,22 @@ import { QUALITY, surfaceMat } from './quality';
  */
 export const scaledBurstCount = (n: number): number =>
   Math.max(1, Math.round(n * QUALITY.particleScale));
+
+/** Max render-side dead-reckon horizon (50ms) — caps overshoot on a stale snapshot. */
+const DEAD_RECKON_MAX = 0.05;
+
+/**
+ * Pure render-side constant-velocity extrapolation. Advances a projectile's
+ * last-known position along (vx,vy) by dt, clamped to {@link DEAD_RECKON_MAX}.
+ * NEVER feeds the sim — smooths the fast rail slug between snapshots only.
+ */
+export function deadReckon(
+  pr: { x: number; y: number; vx: number; vy: number },
+  dt: number,
+): { x: number; y: number } {
+  const t = Math.min(dt, DEAD_RECKON_MAX);
+  return { x: pr.x + pr.vx * t, y: pr.y + pr.vy * t };
+}
 import type {
   BloodPool, FireZone, GameEvent, Grenade, Pickup, PlayerState, Projectile, SmokeZone,
 } from '../sim/types';
@@ -51,10 +67,14 @@ export class EffectsLayer {
   private arcDots: Mesh[] = [];
   private arcLanding: Mesh;
 
+  /** Last update() dt — feeds render-side rail dead-reckoning (never the sim). */
+  private lastFrameDt = 1 / 60;
+
   private poolGeo = new CircleGeometry(1, 26);
   private bulletGeo = new SphereGeometry(0.09, 8, 6);
   private rocketGeo = new ConeGeometry(0.16, 0.5, 8);
   private grenadeGeo = new SphereGeometry(0.16, 10, 8);
+  private railGeo = new BoxGeometry(0.4, 0.12, 0.12); // stretched ×3.5 along travel
 
   constructor(private scene: Scene) {
     const landGeo = new RingGeometry(0.3, 0.42, 24);
@@ -137,14 +157,36 @@ export class EffectsLayer {
         if (pr.kind === 'flame') {
           return this.makeSprite(0xff8020, 0.55, AdditiveBlending);
         }
+        if (pr.kind === 'rail') {
+          // Bright additive slug, stretched along travel.
+          const mesh = new Mesh(this.railGeo, new MeshBasicMaterial({
+            color: GUNS.lance.color, blending: AdditiveBlending, transparent: true,
+          }));
+          mesh.scale.set(3.5, 1, 1);
+          return mesh;
+        }
         const mesh = new Mesh(this.bulletGeo, new MeshBasicMaterial({ color }));
         mesh.scale.set(2.2, 1, 1); // tracer stretch along travel
         return mesh;
       },
       (pr, obj) => {
-        obj.position.set(pr.x, BH, pr.y);
         const ang = Math.atan2(pr.vy, pr.vx);
         obj.rotation.y = -ang;
+        if (pr.kind === 'rail') {
+          // Dead-reckon the fast slug forward, but never past its own range from
+          // the captured muzzle origin (the terminal 'rail' beam stays authoritative).
+          const dr = deadReckon(pr, this.lastFrameDt);
+          const traveled = Math.hypot(dr.x - pr.ox, dr.y - pr.oy);
+          if (traveled > pr.maxDist) {
+            const k = pr.maxDist / (traveled || 1);
+            dr.x = pr.ox + (dr.x - pr.ox) * k;
+            dr.y = pr.oy + (dr.y - pr.oy) * k;
+          }
+          obj.position.set(dr.x, BH, dr.y);
+          obj.scale.set(3.5, 1, 1);
+          return;
+        }
+        obj.position.set(pr.x, BH, pr.y);
         if (pr.kind === 'flame') {
           const t = pr.dist / pr.maxDist;
           const s = 0.35 + t * 1.5;
@@ -540,6 +582,7 @@ export class EffectsLayer {
   }
 
   update(dt: number): void {
+    this.lastFrameDt = dt; // captured for next frame's rail dead-reckoning
     // Particles
     let w = 0;
     for (let i = 0; i < this.particles.length; i++) {
