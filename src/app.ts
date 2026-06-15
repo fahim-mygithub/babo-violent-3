@@ -14,6 +14,8 @@ import type { Hud } from './render/hud';
 import type { ScreenFx } from './render/screenfx';
 import type { LobbyPreview } from './render/lobbyPreview';
 import { InputManager } from './input';
+import type { InputSource } from './input';
+import { TouchControls, shouldUseTouch } from './touch/touchControls';
 import { AudioEngine } from './audio/audio';
 import { UI, type LobbyConfig, type LobbyViewPlayer } from './ui/screens';
 import type { HostSession } from './net/host';
@@ -32,7 +34,10 @@ function defaultScore(mode: ModeId): number {
 
 export class App {
   private ui: UI;
-  private input = new InputManager();
+  private kbm = new InputManager();
+  private touch: TouchControls | null = null;
+  private activeSource: InputSource = this.kbm;
+  private useTouch = false;
   private audio = new AudioEngine();
 
   // Lobby state
@@ -71,7 +76,7 @@ export class App {
     this.classId = storedClass && ALL_CLASS_IDS.includes(storedClass) ? storedClass : 'spider';
     const storedGun = localStorage.getItem(GUN_KEY) as GunId | null;
     this.gunId = storedGun && ALL_GUN_IDS.includes(storedGun) ? storedGun : STARTER_GUN;
-    this.input.enabled = false;
+    this.kbm.enabled = false;
     window.addEventListener('keydown', this.onGlobalKey);
     // Broaden the unlock gesture set for iOS (pointerdown+touchend can both fire
     // from one tap) and de-register ALL of them on the first success so the
@@ -439,13 +444,27 @@ export class App {
     ]);
     this.ui.hide();
     this.disposeLobbyPreview();
-    this.input.enabled = true;
+    this.kbm.enabled = true;
     this.endTimer = -1;
     document.body.style.cursor = 'none';
     const map = MAPS[mapId] ?? MAPS.grinder;
     this.renderer = new GameRenderer(this.container, map);
     this.hud = new Hud(this.container, (x, y, h) => this.renderer!.project(x, y, h));
     this.fx = new ScreenFx(this.container);
+
+    // Touch is built lazily, only when it's the effective source (coarse pointer
+    // or the manual override). On desktop this stays false → activeSource is kbm,
+    // no #touch-layer is created, and the input path is byte-identical.
+    this.useTouch = shouldUseTouch();
+    if (this.useTouch) {
+      this.touch = new TouchControls(this.container, this.localId);
+      this.touch.onLeave = () => this.showMenu();
+      this.activeSource = this.touch;
+      document.body.classList.add('touch-mode');
+    } else {
+      this.activeSource = this.kbm;
+    }
+
     this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, this.role === 'host');
     this.loop.start();
     void this.acquireWakeLock();
@@ -477,21 +496,30 @@ export class App {
   private sampleInput(view: WorldView | null) {
     const local = this.localPlayer(view);
     if (!local || !this.renderer) return emptyInput();
-    const ground = this.renderer.groundPoint(this.input.mouseX, this.input.mouseY);
-    return this.input.sample(ground, local.x, local.y);
+    // Touch path: the producer computes its own aim from the right stick, so it
+    // gets a zero ground (no mouse unprojection) + the live world for aim-assist.
+    if (this.activeSource === this.touch && this.touch) {
+      this.touch.setWorld(view, this.localId);
+      return this.touch.sample({ x: 0, y: 0 }, local.x, local.y);
+    }
+    const ground = this.renderer.groundPoint(this.kbm.mouseX, this.kbm.mouseY);
+    return this.kbm.sample(ground, local.x, local.y);
   }
 
   private tick(): void {
     if (this.role === 'client') {
       const client = this.client;
       if (!client) return;
+      this.touch?.setWorld(client.view, this.localId);
       const input = this.sampleInput(client.view);
       client.sendInput(input);
       return;
     }
     const sim = this.sim;
     if (!sim) return;
-    const input = this.sampleInput(this.view());
+    const view = this.view();
+    this.touch?.setWorld(view, this.localId);
+    const input = this.sampleInput(view);
     sim.setInput(this.localId, input);
     this.host?.applyInputs(sim);
     sim.step();
@@ -523,7 +551,7 @@ export class App {
     if (!view || !this.renderer || !this.hud || !this.fx) return;
     const local = this.localPlayer(view);
     this.renderer.render(view, this.localId, frameDt);
-    this.hud.update(view, this.localId, { x: this.input.mouseX, y: this.input.mouseY }, this.input.showScores, frameDt);
+    this.hud.update(view, this.localId, { x: this.kbm.mouseX, y: this.kbm.mouseY }, this.activeSource.showScores, frameDt);
     this.fx.update(local, frameDt);
     this.audio.update(local, frameDt);
 
@@ -534,7 +562,7 @@ export class App {
   }
 
   private showEndScreen(view: WorldView): void {
-    this.input.enabled = false;
+    this.kbm.enabled = false;
     document.body.style.cursor = '';
     const players = [...view.players];
     this.ui.showEnd({
@@ -619,7 +647,12 @@ export class App {
     this.fx?.dispose();
     this.fx = null;
     this.sim = null;
-    this.input.enabled = false;
+    this.touch?.dispose();
+    this.touch = null;
+    this.activeSource = this.kbm;
+    this.useTouch = false;
+    document.body.classList.remove('touch-mode');
+    this.kbm.enabled = false;
     document.body.style.cursor = '';
   }
 
