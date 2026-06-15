@@ -486,6 +486,23 @@ export class App {
     this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, this.role === 'host');
     this.loop.start();
     void this.acquireWakeLock();
+
+    // Android-only progressive enhancement: go fullscreen so the URL bar / nav
+    // chrome stop stealing vertical space. Gated on a coarse pointer AND the
+    // presence of Element.requestFullscreen — iPhone Safari lacks it, so it
+    // silently no-ops and falls back to the visualViewport/safe-area layout
+    // (which never depends on fullscreen). NEVER lock orientation: portrait is a
+    // product decision, not a programmatic constraint. Rejection is swallowed.
+    const el = this.container as HTMLElement & { requestFullscreen?: () => Promise<void> };
+    if (
+      el.requestFullscreen &&
+      typeof matchMedia === 'function' &&
+      matchMedia('(pointer: coarse)').matches
+    ) {
+      el.requestFullscreen().catch(() => {
+        /* iOS / user-denied: the layout works without fullscreen. */
+      });
+    }
   }
 
   private view(): WorldView | null {
