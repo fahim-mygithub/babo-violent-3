@@ -309,41 +309,117 @@ html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
 }
 
-/* ---------- portrait control band (S8.6) ----------
-   The play surface splits: arena reads the top ~60%, on-screen controls the
-   bottom ~40%. The analog sticks are floating-origin (no fixed DOM box) and the
-   touchControls hit zones already confine them to the lower half (left <45%w &
-   >50%h; right >45%w & >60%h). The edge BUTTONS are positioned here against the
-   bottom edge so the whole control cluster lives in the bottom band, clear of the
-   notch/home-indicator via the safe-area insets. Explicit longhand offsets (not
-   the `inset`/`bottom` shorthand) so a headless jsdom CSSOM can resolve the band
-   intent. The buttons are children of #touch-layer (z 90), so they ride above the
-   game canvases but below the .screen menus. */
+/* ---------- portrait twin-stick control GUI (S1/S2/S3 redesign) ----------
+   Replaces the invisible floating sticks + bottom-right button stack. Now: a
+   faint always-on "home" ghost ring + center glyph per side gives the thumb a
+   permanent target and self-documents each stick; a floating active ring + knob
+   bloom at the touch point; the action chips form a reachable cluster placed off
+   the aim-thumb's working envelope (no vertical stack). Everything here is
+   paint-only — the floating-origin input math in touchControls.ts is unchanged,
+   so the emitted PlayerInput stays byte-identical. Baseline numbers target a
+   390x844 portrait phone; vertical offsets anchor UP from the safe-area bottom so
+   the thumb arc stays reachable on larger phones. */
+
+/* All stick/grenade visuals are paint-only; #touch-layer owns the pointer math. */
+.tc-stick, .tc-stick-home, .tc-stick-active, .tc-stick-ring, .tc-stick-knob,
+.tc-stick-glyph, .tc-gren, .tc-gren-ring, .tc-gren-knob { pointer-events: none; }
+
+/* Fixed "home" ghost ring — the permanent thumb target (centered on its anchor). */
+.tc-stick-home {
+  position: absolute;
+  width: 112px; height: 112px;
+  border-radius: 50%;
+  border: 2px solid rgba(42, 46, 56, 0.55);
+  background: radial-gradient(circle at 50% 50%, rgba(20, 22, 28, 0.30), rgba(20, 22, 28, 0.10) 72%);
+  display: grid; place-items: center;
+}
+.tc-stick-home.left  { left:  calc(16px + env(safe-area-inset-left));  bottom: calc(48px + env(safe-area-inset-bottom)); }
+.tc-stick-home.right { right: calc(16px + env(safe-area-inset-right)); bottom: calc(48px + env(safe-area-inset-bottom)); }
+
+.tc-stick-glyph { width: 36px; height: 36px; opacity: 0.45; filter: drop-shadow(0 1px 1.2px rgba(0,0,0,0.85)); }
+.tc-stick-glyph svg { width: 100%; height: 100%; display: block; }
+.tc-stick-home.left  .tc-stick-glyph { color: var(--blue); }
+.tc-stick-home.right .tc-stick-glyph { color: var(--blood-bright); }
+/* Right stick swaps crosshair → muzzle-burst + reddens when firing. */
+.tc-stick.right .gx-fire { display: none; }
+.tc-stick.right.firing .gx-aim { display: none; }
+.tc-stick.right.firing .gx-fire { display: block; }
+.tc-stick.right.firing .tc-stick-home { border-color: rgba(255, 53, 64, 0.7); }
+
+/* Floating active ring + knob (positioned at the clamped touch point by JS). */
+.tc-stick-active { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; transition: opacity 0.09s ease; }
+.tc-stick-active.active { opacity: 1; }
+.tc-stick-ring {
+  position: absolute; left: -60px; top: -60px; width: 120px; height: 120px;
+  border-radius: 50%; border: 2px solid rgba(232, 237, 242, 0.55); background: rgba(20, 22, 28, 0.16);
+}
+.tc-stick-knob {
+  position: absolute; left: -26px; top: -26px; width: 52px; height: 52px;
+  border-radius: 50%; background: rgba(232, 237, 242, 0.62); border: 1.5px solid rgba(11, 12, 16, 0.5);
+  transition: transform 0.08s ease-out;
+}
+.tc-stick-active.left .tc-stick-ring { border-color: rgba(106, 168, 255, 0.6); }
+.tc-stick-active.left .tc-stick-knob { background: rgba(106, 168, 255, 0.6); }
+.tc-stick.right.firing .tc-stick-ring { border-color: rgba(255, 53, 64, 0.75); }
+.tc-stick.right.firing .tc-stick-knob { background: rgba(255, 53, 64, 0.7); }
+
+/* Screen-space grenade drag affordance (the "drag-arc stick" on EQUIP-hold). */
+.tc-gren { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; transition: opacity 0.1s ease; }
+.tc-gren.active { opacity: 1; }
+.tc-gren-ring {
+  position: absolute; left: -90px; top: -90px; width: 180px; height: 180px; border-radius: 50%;
+  border: 2px dashed rgba(192, 24, 31, 0.5);
+  background: radial-gradient(circle, rgba(192, 24, 31, 0.12), transparent 70%);
+}
+.tc-gren-knob {
+  position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(255, 53, 64, 0.78); border: 1.5px solid rgba(11, 12, 16, 0.5);
+  transition: transform 0.05s linear;
+}
+
+/* ---------- action chips (icon + label, off the aim-thumb envelope) ---------- */
 .tc-btn {
   position: absolute;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  width: 64px; min-height: 58px;
+  padding: 6px 4px;
+  border: 1.5px solid rgba(154, 164, 176, 0.5);
+  border-radius: 14px;
+  background: rgba(20, 22, 28, 0.6);
+  color: var(--text);
+  opacity: 0.66;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  transition: opacity 0.12s ease, background 0.12s ease, transform 0.08s ease;
+  user-select: none;
+  /* default anchor (overridden per id) */
   top: auto;
   bottom: calc(18px + env(safe-area-inset-bottom));
   right: calc(18px + env(safe-area-inset-right));
-  min-width: 64px;
-  min-height: 44px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(20, 22, 28, 0.6);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  user-select: none;
 }
-/* Action cluster stacks up the bottom-right corner (skill highest, equip lowest). */
-#tc-skill  { bottom: calc(214px + env(safe-area-inset-bottom)); }
-#tc-reload { bottom: calc(116px + env(safe-area-inset-bottom)); }
-#tc-equip  { bottom: calc(18px  + env(safe-area-inset-bottom)); }
-#tc-pickup { bottom: calc(214px + env(safe-area-inset-bottom)); right: calc(92px + env(safe-area-inset-right)); }
-/* Scoreboard + leave ride the TOP band (out of the thumb zone), bottom:auto. */
-#tc-scores { top: calc(14px + env(safe-area-inset-top)); right: calc(92px + env(safe-area-inset-right)); bottom: auto; }
-#tc-leave  { top: calc(14px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); bottom: auto; }
+.tc-btn:active { opacity: 1; background: rgba(20, 22, 28, 0.85); transform: scale(0.95); }
+.tc-ico { width: 28px; height: 28px; display: block; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.9)); }
+.tc-ico svg { width: 100%; height: 100%; display: block; }
+.tc-lbl { font-size: 9px; font-weight: 800; letter-spacing: 0.6px; color: var(--dim); line-height: 1; }
+#tc-skill  .tc-ico { color: var(--gold); }
+#tc-reload .tc-ico { color: var(--blue); }
+#tc-equip  .tc-ico { color: var(--green); }
+#tc-pickup .tc-ico { color: var(--gold); }
+#tc-scores .tc-ico, #tc-leave .tc-ico { color: var(--dim); }
+
+/* Cluster (right-handed): SKILL nearest the stick, RELOAD up-inboard, NADE upper.
+   Positions verified for a >=88px keep-out from the aim home + >=14px inter-chip
+   gaps on the 390x844 baseline; no chip enters the aim-thumb working envelope. */
+#tc-skill  { right: calc(12px  + env(safe-area-inset-right)); bottom: calc(200px + env(safe-area-inset-bottom)); }
+#tc-reload { right: calc(104px + env(safe-area-inset-right)); bottom: calc(236px + env(safe-area-inset-bottom)); }
+#tc-equip  { right: calc(20px  + env(safe-area-inset-right)); bottom: calc(306px + env(safe-area-inset-bottom)); }
+/* Contextual PICKUP: low-center, raised above both stick reach arcs. */
+#tc-pickup { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(176px + env(safe-area-inset-bottom)); }
+#tc-pickup:active { transform: translateX(-50%) scale(0.95); }
+/* SCORE + LEAVE demoted: smaller, dimmer, top corners (rare, a regrip is fine). */
+#tc-scores, #tc-leave { width: 52px; min-height: 48px; opacity: 0.5; border-radius: 12px; bottom: auto; }
+#tc-scores { top: calc(14px + env(safe-area-inset-top)); right: calc(80px + env(safe-area-inset-right)); }
+#tc-leave  { top: calc(14px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); }
+#tc-scores .tc-lbl, #tc-leave .tc-lbl { font-size: 8px; }
 
 /* ---------- portrait phone layout (S6.5) ----------
    FIRST @media block in the project. Everything above is the desktop cascade and

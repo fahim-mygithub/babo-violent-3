@@ -95,3 +95,34 @@ measured for 8 bots), and most phones join rather than host. Documented as a sea
   zero console errors.
 - Remaining: **L5 real-device sign-off** (mid-range phone, p50 ≥58 fps in 8-bot chaos, touch-only full
   match) is a manual checkbox by design and gates whether any deferred Phase-3 item is needed.
+
+## Control GUI redesign (post-first-device-feedback)
+First-device feedback: the floating sticks were **invisible** ("guessing where to put your thumbs"),
+controls had **no icons**, and the action buttons **stacked aimlessly up the right edge** (colliding with
+the aim thumb). Redesigned from a researched spec (`docs/plans/` design workflow: 5-angle web sweep on
+portrait twin-stick GUI + thumb-zone ergonomics → synthesis → adversarial critique). All changes are
+**visual + input-PRODUCTION only**; the emitted `PlayerInput` and every sim constant stay byte-identical
+(golden determinism guard green, never `-u`; 50 touch tests incl. an explicit "visuals don't change
+emitted input" pin).
+- **Visible hybrid sticks** (`src/touch/touchControls.ts` + `src/ui/styles.css`): each side keeps the
+  determinism-safe floating origin but now draws a faint always-on **home ghost ring + center SVG glyph**
+  (move-cross / crosshair) so the thumb has a permanent, self-documenting target; a **floating active ring
+  + knob** blooms at the (on-screen-clamped) touch point and tracks deflection. Right stick reddens and
+  swaps crosshair→**muzzle-burst** past the autofire deadzone (and drops that visual while the grenade arc
+  is modal, mirroring the FIRE suppression).
+- **Action-chip cluster, no stack**: SKILL/RELOAD/NADE placed off the aim-thumb working envelope (≥88px
+  keep-out, ≥14px inter-chip gaps on the 390×844 baseline), each with an **SVG icon + caption**; contextual
+  PICKUP low-center; SCORE/LEAVE demoted to dim top corners. The right activation zone now **carves out the
+  chip hit rects** so a thumb-down on a button can't start a phantom aim stick, and `onDown` ignores the
+  bottom **home-indicator strip**.
+- **Screen-space grenade drag-arc affordance** on EQUIP-hold (origin dot + max-range ring + knob), hidden
+  the instant THROW releases. World landing reticle already gold — distinct from the red aim laser.
+- **Robustness**: `setPointerCapture` is now routed through a guarded `capture()` helper (swallows the
+  NotFoundError on synthetic/lost pointers) for both sticks AND the SKILL/EQUIP buttons; the window-level
+  pointerup fallback was extended from SKILL-only to **both sticks** so nothing can stick on if capture fails.
+- **Verified**: adversarial code review (no blockers, determinism confirmed by line-by-line diff); the
+  **production build** browser-tested (`vite preview`) — sticks render with glyphs, active rings bloom,
+  firing reddens + glyph-swaps, grenade overlay shows/hides, zero console errors, Rapier defers cleanly.
+  Ergonomic spacing (exact thumb reach) is the next **real-device** check on the user's phone.
+- **Deferred** (YAGNI for first device feel): left-handed mirror mode (designed + gated, not built),
+  accumulated/edge-relative grenade drag magnitude for the screen-edge corner case.
