@@ -13,6 +13,13 @@
   --green: #46d05a;
   --blue: #6aa8ff;
   --red: #ff6a6a;
+  /* Device safe-area insets (notch/home-indicator), surfaced for the HUD status
+     panel to read via getComputedStyle('--bv3-safe-*'). env() resolves to 0 on
+     desktop and inside non-cover viewports, so this is desktop-inert. */
+  --bv3-safe-top: env(safe-area-inset-top);
+  --bv3-safe-right: env(safe-area-inset-right);
+  --bv3-safe-bottom: env(safe-area-inset-bottom);
+  --bv3-safe-left: env(safe-area-inset-left);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -273,6 +280,16 @@ input.field:focus { border-color: var(--blood-bright); }
    Scoped to the play surfaces ONLY (canvases + touch layer). The .screen scroll
    containers keep touch-action:auto so menus/lobby still scroll and tap. */
 html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+/* The touch overlay is created lazily by TouchControls (#touch-layer); size it
+   to fill the play surface so the analog sticks read across the whole viewport,
+   and keep touch-action:none so gestures never scroll the page during a match.
+   Sits above the game canvases but below the .screen menus (z 100). */
+#touch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  touch-action: none;
+}
 #game-canvas, #hud-canvas, #fx-canvas, #touch-layer {
   touch-action: none;
   -webkit-user-select: none; user-select: none;
