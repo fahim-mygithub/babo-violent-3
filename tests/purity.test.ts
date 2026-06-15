@@ -42,7 +42,7 @@ describe('sim purity allowlist contract', () => {
     expect(allowed('../data/constants')).toBe(true);
     expect(allowed('../data/classes')).toBe(true);
     expect(allowed('../core/math')).toBe(true);
-    expect(allowed('@dimforge/rapier2d-compat')).toBe(true);
+    expect(allowed('@dimforge/rapier2d')).toBe(true);
     expect(allowed('./systems/movement')).toBe(true);
   });
 });

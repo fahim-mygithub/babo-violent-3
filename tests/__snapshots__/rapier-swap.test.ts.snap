@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`rapier non-compat swap — determinism > seed-42 8-bot TDM is byte-identical to the pre-swap golden hash 1`] = `"8b2e299e00000258"`;

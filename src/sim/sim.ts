@@ -1,4 +1,4 @@
-import RAPIER from '@dimforge/rapier2d-compat';
+import type RAPIER_NS from '@dimforge/rapier2d';
 import { dist, norm, segAABB, segCircle } from '../core/math';
 import { RNG } from '../core/rng';
 import { C } from '../data/constants';
@@ -22,13 +22,26 @@ import { pickupSystem } from './systems/pickups';
 import { modeSystem } from './systems/modes';
 import { botSystem } from './systems/bots';
 
-let rapierReady = false;
+// Lazily-bound runtime ref. The non-compat @dimforge/rapier2d ships a separate
+// .wasm (no base64 inline) and auto-instantiates on module import — it does NOT
+// expose init(). initPhysics() defensively handles both contracts so a future
+// package shape change (compat-style init()) keeps working.
+let RAPIER: typeof RAPIER_NS;
 
-/** Must be awaited once before constructing any GameSim. */
-export async function initPhysics(): Promise<void> {
-  if (rapierReady) return;
-  await RAPIER.init();
-  rapierReady = true;
+let rapierReady = false;
+let initPromise: Promise<void> | null = null;
+
+/** Must be awaited once before constructing any GameSim. Idempotent + retryable. */
+export function initPhysics(): Promise<void> {
+  if (rapierReady) return Promise.resolve();
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    const mod = await import('@dimforge/rapier2d');
+    if (typeof (mod as any).init === 'function') await (mod as any).init(); // compat-style if present
+    RAPIER = mod as unknown as typeof RAPIER_NS;                            // else auto-instantiated
+    rapierReady = true;
+  })().catch((e) => { initPromise = null; throw e; });                     // reset for retry
+  return initPromise;
 }
 
 export const GROUP_WALL = 0x0001;
@@ -47,13 +60,13 @@ export class GameSim {
   readonly dt = 1 / C.SIM_HZ;
   tick = 0;
 
-  readonly world: RAPIER.World;
+  readonly world: RAPIER_NS.World;
   readonly map: MapDef;
   readonly rng: RNG;
   readonly mode: ModeState;
 
   readonly players = new Map<number, PlayerState>();
-  readonly bodies = new Map<number, RAPIER.RigidBody>();
+  readonly bodies = new Map<number, RAPIER_NS.RigidBody>();
   projectiles: Projectile[] = [];
   grenades: Grenade[] = [];
   pools: BloodPool[] = [];
