@@ -2,16 +2,24 @@
 
 exports[`determinism golden guard > frozen golden hashes at ticks 300/600/1200 ('bounty'/11) 1`] = `
 {
-  "1200": "454df7d8000004b0",
-  "300": "0a4caee10000012c",
-  "600": "2271d86d00000258",
+  "1200": "bae47bd7000004b0",
+  "300": "afbbb4f70000012c",
+  "600": "31c2e6c500000258",
+}
+`;
+
+exports[`determinism golden guard > frozen golden hashes at ticks 300/600/1200 ('ctf'/7) 1`] = `
+{
+  "1200": "f850324e000004b0",
+  "300": "be6eebcc0000012c",
+  "600": "2da2fe8600000258",
 }
 `;
 
 exports[`determinism golden guard > frozen golden hashes at ticks 300/600/1200 ('tdm'/23) 1`] = `
 {
-  "1200": "27e2990a000004b0",
-  "300": "24d165780000012c",
-  "600": "5a8e84bc00000258",
+  "1200": "03c476a5000004b0",
+  "300": "16ed7a5a0000012c",
+  "600": "35681abe00000258",
 }
 `;

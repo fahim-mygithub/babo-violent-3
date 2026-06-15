@@ -1,5 +1,5 @@
 import { GameSim, initPhysics } from '../src/sim/sim';
-import type { SimOptions, PlayerInput } from '../src/sim/types';
+import type { SimOptions, PlayerInput, FlagState } from '../src/sim/types';
 import { BTN, emptyInput } from '../src/sim/types';
 
 export { BTN, emptyInput };
@@ -75,7 +75,13 @@ export function simHash(sim: GameSim): string {
   for (const g of sim.grenades) { fnv(s, g.id); fnv(s, g.x); fnv(s, g.y); fnv(s, g.z); fnv(s, g.fuse); }
   for (const pool of sim.pools) { fnv(s, pool.id); fnv(s, pool.x); fnv(s, pool.y); fnv(s, pool.r); fnv(s, pool.age); }
   for (const f of sim.fires) { fnv(s, f.id); fnv(s, f.x); fnv(s, f.y); fnv(s, f.r); fnv(s, f.ttl); }
+  // Smoke zones block hasLOS() → bot targeting → determinism, so they must be hashed.
+  for (const sm of sim.smokes) { fnv(s, sm.id); fnv(s, sm.x); fnv(s, sm.y); fnv(s, sm.r); fnv(s, sm.ttl); }
+  // Pickups: respawn/loot timing (ttl, node index) affects behavior.
+  for (const pk of sim.pickups) { fnv(s, pk.id); fnv(s, pk.x); fnv(s, pk.y); fnv(s, pk.nodeIdx); fnv(s, pk.ttl); }
   fnv(s, sim.mode.teamScores[0]); fnv(s, sim.mode.teamScores[1]);
-  for (const flag of sim.mode.flags) { fnv(s, flag.team); fnv(s, flag.x); fnv(s, flag.y); fnv(s, flag.carrier); fnv(s, flag.returnT); }
+  // FlagState.state is a string discriminant; encode it numerically (base/carried/dropped).
+  const FLAG_STATE: Record<FlagState['state'], number> = { base: 0, carried: 1, dropped: 2 };
+  for (const flag of sim.mode.flags) { fnv(s, flag.team); fnv(s, flag.x); fnv(s, flag.y); fnv(s, FLAG_STATE[flag.state]); fnv(s, flag.carrier); fnv(s, flag.returnT); }
   return (s.h >>> 0).toString(16).padStart(8, '0') + (sim.tick >>> 0).toString(16).padStart(8, '0');
 }

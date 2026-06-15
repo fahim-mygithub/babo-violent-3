@@ -32,4 +32,34 @@ describe('simHash', () => {
     sim.players.get(0)!.x += 1e-6;
     expect(simHash(sim)).not.toBe(before);
   });
+
+  it('covers smoke zones (LOS-affecting, so determinism-relevant)', async () => {
+    const sim = await twinSim(23);
+    run(sim, 50);
+    const before = simHash(sim);
+    // Smoke blocks GameSim.hasLOS → bot targeting → determinism.
+    sim.smokes.push({ id: sim.newId(), x: 1, y: 2, r: 2.8, ttl: 8 });
+    expect(simHash(sim)).not.toBe(before);
+  });
+
+  it('covers pickups (respawn/loot timing affects behavior)', async () => {
+    const sim = await twinSim(23);
+    run(sim, 50);
+    const before = simHash(sim);
+    // Pickups exist from map node init; perturbing a numeric field must shift the hash.
+    // (node pickups have ttl=Infinity, so perturb a finite field instead.)
+    sim.pickups[0]!.x += 1e-6;
+    expect(simHash(sim)).not.toBe(before);
+  });
+
+  it('covers the CTF flag state discriminant', async () => {
+    const sim = await makeSim({ mode: 'ctf', seed: 7 });
+    const classes = ['spider', 'juggernaut', 'bastion', 'phantom'] as const;
+    for (let i = 0; i < 4; i++) sim.addPlayer(`Bot${i}`, classes[i], (i % 2) as 0 | 1, true);
+    run(sim, 50);
+    const before = simHash(sim);
+    // state ('base'|'carried'|'dropped') is gameplay-affecting but not otherwise numeric.
+    sim.mode.flags[0]!.state = sim.mode.flags[0]!.state === 'base' ? 'carried' : 'base';
+    expect(simHash(sim)).not.toBe(before);
+  });
 });

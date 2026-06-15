@@ -25,6 +25,7 @@ const MARKS = [300, 600, 1200];
 const CASES = [
   { mode: 'tdm' as const, seed: 23, bots: 6, ffa: false },
   { mode: 'bounty' as const, seed: 11, bots: 6, ffa: true },
+  { mode: 'ctf' as const, seed: 7, bots: 6, ffa: false },
 ];
 
 describe('determinism golden guard', () => {
