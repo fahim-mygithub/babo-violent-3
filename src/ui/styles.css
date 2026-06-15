@@ -295,3 +295,34 @@ html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   -webkit-user-select: none; user-select: none;
   -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
 }
+
+/* ---------- portrait phone layout (S6.5) ----------
+   FIRST @media block in the project. Everything above is the desktop cascade and
+   stays byte-identical — these rules only apply at <=760px. The fixed 3-col
+   .lobby grid collapses to one column; .screen becomes the scroll container
+   (touch-action:pan-y so menus still scroll vertically — NOT none); tap targets
+   grow to >=44px; form fonts hit 16px to defeat iOS focus-zoom. Safe-area padding
+   keeps content clear of the notch/home-indicator. */
+@media (max-width: 760px) {
+  .lobby {
+    grid-template-columns: 1fr;
+    width: 96vw;
+  }
+  .screen {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    justify-content: flex-start;
+    padding: max(18px, env(safe-area-inset-top)) env(safe-area-inset-right)
+             max(18px, env(safe-area-inset-bottom)) env(safe-area-inset-left);
+  }
+  .title { font-size: clamp(34px, 12vw, 64px); letter-spacing: 3px; }
+  .screen h1 { font-size: clamp(28px, 9vw, 48px); }
+  .menu-col { width: min(420px, 92vw); }
+  .class-card, .gun-chip, button.btn, button.btn.small {
+    min-height: 44px;
+  }
+  .gun-chip { align-items: center; }
+  input, select, textarea, input.field { font-size: 16px; }
+  .class-card:active, .gun-chip:active, button.btn:active { transform: scale(0.97); }
+}
