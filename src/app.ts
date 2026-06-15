@@ -3,17 +3,21 @@ import { C } from './data/constants';
 import { ALL_CLASS_IDS, type ClassId } from './data/classes';
 import { ALL_GUN_IDS, GUNS, STARTER_GUN, type GunId } from './data/weapons';
 import { DEFAULT_MAP, MAPS } from './data/maps';
-import { GameSim } from './sim/sim';
+// initPhysics is light: the rapier WASM import lives *inside* it, pulled on first
+// call (host/local launch), never at module load. The GameSim implementation is
+// dynamically imported alongside it so the menu/entry chunk stays sim-free.
+import { initPhysics } from './sim/sim';
+import type { GameSim } from './sim/sim';
 import { emptyInput, type GameEvent, type ModeId, type PlayerState } from './sim/types';
-import { GameRenderer, type WorldView } from './render/renderer';
-import { Hud } from './render/hud';
-import { ScreenFx } from './render/screenfx';
-import { LobbyPreview } from './render/lobbyPreview';
+import type { GameRenderer, WorldView } from './render/renderer';
+import type { Hud } from './render/hud';
+import type { ScreenFx } from './render/screenfx';
+import type { LobbyPreview } from './render/lobbyPreview';
 import { InputManager } from './input';
 import { AudioEngine } from './audio/audio';
 import { UI, type LobbyConfig, type LobbyViewPlayer } from './ui/screens';
-import { HostSession } from './net/host';
-import { ClientSession } from './net/client';
+import type { HostSession } from './net/host';
+import type { ClientSession } from './net/client';
 import { sanitizeName, type MatchSettings } from './net/types';
 
 type Role = 'local' | 'host' | 'client';
@@ -42,6 +46,8 @@ export class App {
   // Animated lobby showcase (persists across lobby re-renders; re-parented each time)
   private lobbyPreview: LobbyPreview | null = null;
   private previewCanvas: HTMLCanvasElement | null = null;
+  private previewLoading = false; // guards the async LobbyPreview import from double-construction
+  private prefetched = false;
 
   // Match state
   private role: Role = 'local';
@@ -121,23 +127,38 @@ export class App {
   private mountLobbyPreview(): void {
     const slot = this.container.querySelector('#preview-slot');
     if (!slot) return;
-    if (!this.lobbyPreview || !this.previewCanvas) {
-      const canvas = document.createElement('canvas');
-      canvas.className = 'preview-canvas';
-      this.previewCanvas = canvas;
-      this.lobbyPreview = new LobbyPreview(canvas);
-      this.lobbyPreview.onCaption = (txt) => {
-        const cap = document.getElementById('demo-caption');
-        if (cap) {
-          cap.textContent = txt ? `▶ ${txt}` : '';
-          cap.classList.toggle('on', !!txt);
-        }
-      };
-      this.lobbyPreview.start();
+    // Already constructed: just re-parent + restate (synchronous, no flicker).
+    if (this.lobbyPreview && this.previewCanvas) {
+      slot.insertBefore(this.previewCanvas, slot.firstChild);
+      this.lobbyPreview.setLoadout(this.classId, this.gunId);
+      this.lobbyPreview.resize();
+      return;
     }
-    slot.insertBefore(this.previewCanvas, slot.firstChild);
-    this.lobbyPreview.setLoadout(this.classId, this.gunId);
-    this.lobbyPreview.resize();
+    if (this.previewLoading) return; // import in flight; a later showLobby will mount it
+    this.previewLoading = true;
+    void import('./render/lobbyPreview')
+      .then(({ LobbyPreview }) => {
+        this.previewLoading = false;
+        // The lobby may have been torn down (match entered / menu) while loading.
+        const liveSlot = this.container.querySelector('#preview-slot');
+        if (!liveSlot) return;
+        const canvas = document.createElement('canvas');
+        canvas.className = 'preview-canvas';
+        this.previewCanvas = canvas;
+        this.lobbyPreview = new LobbyPreview(canvas);
+        this.lobbyPreview.onCaption = (txt) => {
+          const cap = document.getElementById('demo-caption');
+          if (cap) {
+            cap.textContent = txt ? `▶ ${txt}` : '';
+            cap.classList.toggle('on', !!txt);
+          }
+        };
+        this.lobbyPreview.start();
+        liveSlot.insertBefore(canvas, liveSlot.firstChild);
+        this.lobbyPreview.setLoadout(this.classId, this.gunId);
+        this.lobbyPreview.resize();
+      })
+      .catch(() => { this.previewLoading = false; });
   }
 
   private disposeLobbyPreview(): void {
@@ -179,7 +200,7 @@ export class App {
           if (modeChanged) this.cfg.scoreLimit = defaultScore(cfg.mode);
           this.showLocalLobby();
         },
-        onStart: () => this.launchLocalMatch(),
+        onStart: () => { void this.launchLocalMatch().catch(() => this.failToLobby()); },
         onLeave: () => this.showMenu(),
       },
     });
@@ -194,6 +215,7 @@ export class App {
         scoreLimit: this.cfg.scoreLimit, botCount: this.cfg.botCount,
         seed: Math.floor(Math.random() * 2 ** 31),
       };
+      const { HostSession } = await import('./net/host'); // pulls the peerjs chunk on host
       this.host = await HostSession.create(this.playerName, this.classId, this.gunId, settings);
       this.host.onLobby = () => this.showHostLobby();
       this.host.onError = (msg) => { this.ui.toast(`Connection error: ${msg}`); };
@@ -246,7 +268,7 @@ export class App {
             scoreLimit: cfg.mode !== host.settings.mode ? defaultScore(cfg.mode) : cfg.scoreLimit,
           });
         },
-        onStart: () => this.launchHostMatch(),
+        onStart: () => { void this.launchHostMatch().catch(() => this.failToLobby()); },
         onLeave: () => this.showMenu(),
       },
     });
@@ -256,6 +278,7 @@ export class App {
   private async joinGame(code: string): Promise<void> {
     this.ui.showConnecting('CONNECTING…', () => this.showMenu());
     try {
+      const { ClientSession } = await import('./net/client'); // pulls the peerjs chunk on join
       this.client = await ClientSession.join(code, this.playerName, this.classId, this.gunId);
       this.client.onLobby = () => this.showClientLobby();
       this.client.onClosed = (reason) => {
@@ -305,12 +328,17 @@ export class App {
   // Match lifecycle
   // ---------------------------------------------------------------------------
 
-  private buildSim(settings: MatchSettings): GameSim {
-    const sim = new GameSim({
+  /**
+   * Build a sim, pulling the rapier chunk + .wasm and the GameSim implementation
+   * here (never at boot). The CLIENT never calls this, so it never downloads Rapier.
+   */
+  private async loadSim(settings: MatchSettings): Promise<GameSim> {
+    await initPhysics(); // pulls the rapier chunk + .wasm here, never at boot
+    const { GameSim } = await import('./sim/sim');
+    return new GameSim({
       mapId: settings.mapId, mode: settings.mode, seed: settings.seed,
       scoreLimit: settings.scoreLimit,
     });
-    return sim;
   }
 
   private addBots(sim: GameSim, count: number, mode: ModeId, startTeam: number): void {
@@ -326,7 +354,7 @@ export class App {
     }
   }
 
-  private launchLocalMatch(): void {
+  private async launchLocalMatch(): Promise<void> {
     const settings: MatchSettings = {
       mode: this.cfg.mode, mapId: DEFAULT_MAP,
       scoreLimit: this.cfg.scoreLimit, botCount: this.cfg.botCount,
@@ -334,21 +362,21 @@ export class App {
     };
     this.lastSettings = settings;
     this.role = 'local';
-    const sim = this.buildSim(settings);
+    const sim = await this.loadSim(settings);
     const me = sim.addPlayer(this.playerName, this.classId, settings.mode === 'bounty' ? -1 : 0, false, this.gunId);
     this.addBots(sim, settings.botCount, settings.mode, 1);
     this.localId = me.id;
     this.sim = sim;
-    this.enterMatch(settings.mapId);
+    await this.enterMatch(settings.mapId);
   }
 
-  private launchHostMatch(): void {
+  private async launchHostMatch(): Promise<void> {
     const host = this.host;
     if (!host) return;
     const settings = { ...host.settings, seed: Math.floor(Math.random() * 2 ** 31) };
     this.lastSettings = settings;
     this.role = 'host';
-    const sim = this.buildSim(settings);
+    const sim = await this.loadSim(settings);
     const assignments = new Map<string, number>();
     let teamCursor = 0;
     for (const lp of host.players) {
@@ -360,18 +388,28 @@ export class App {
     this.addBots(sim, settings.botCount, settings.mode, teamCursor);
     this.sim = sim;
     host.startMatch(assignments);
-    this.enterMatch(settings.mapId);
+    await this.enterMatch(settings.mapId);
   }
 
+  // CLIENT path: never loads a sim and never imports Rapier — it renders the
+  // host's authoritative view, so it only needs the render chunk.
   private launchClientMatch(settings: MatchSettings, yourId: number): void {
     this.role = 'client';
     this.lastSettings = settings;
     this.localId = yourId;
     this.sim = null;
-    this.enterMatch(settings.mapId);
+    this.enterMatch(settings.mapId).catch(() => {
+      this.ui.toast('Failed to load — check connection');
+      this.showMenu();
+    });
   }
 
-  private enterMatch(mapId: string): void {
+  private async enterMatch(mapId: string): Promise<void> {
+    // Pull the render chunk BEFORE hiding the lobby so a slow/failed load never
+    // leaves a black screen — ui.hide() only runs once the imports resolve.
+    const [{ GameRenderer }, { Hud }, { ScreenFx }] = await Promise.all([
+      import('./render/renderer'), import('./render/hud'), import('./render/screenfx'),
+    ]);
     this.ui.hide();
     this.disposeLobbyPreview();
     this.input.enabled = true;
@@ -479,12 +517,19 @@ export class App {
       onAgain: this.role !== 'client'
         ? () => {
             this.teardownMatch();
-            if (this.role === 'host') this.launchHostMatch();
-            else this.launchLocalMatch();
+            const again = this.role === 'host' ? this.launchHostMatch() : this.launchLocalMatch();
+            void again.catch(() => this.failToLobby());
           }
         : undefined,
       onMenu: () => this.showMenu(),
     });
+  }
+
+  /** A rejected match-entry import (chunk/WASM fetch failed) restores the lobby instead of a black screen. */
+  private failToLobby(): void {
+    this.teardownMatch();
+    this.ui.toast('Failed to load — check connection');
+    this.showMenu();
   }
 
   private onClientMatchEnd(_winner: number): void {
