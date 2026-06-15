@@ -5,6 +5,7 @@ import { type GunId } from '../data/weapons';
 import { makeBaboMaterial, type BaboUniforms } from './baboShader';
 import { buildGunModel, disposeGunModel } from './gunModels';
 import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboShapes';
+import { previewQuality } from './quality';
 
 /**
  * Self-contained animated hero shot of the selected Babo for the lobby. Owns a
@@ -48,14 +49,19 @@ export class LobbyPreview {
   private running = false;
   private time = 0;
   private last = 0;
+  private acc = 0;          // frame-cap accumulator (mid throttle)
+  private minFrame = 0;     // min seconds between rendered frames (0 = uncapped)
   private ro: ResizeObserver | null = null;
 
   /** Fired with the ability name while a demo plays, null when idle. */
   onCaption: ((text: string | null) => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
-    this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Tier throttle (S3.8): high = AA on / DPR≤2 / uncapped; mid = AA off / DPR≤1 / 30fps.
+    const q = previewQuality();
+    this.minFrame = q.maxFps > 0 ? 1 / q.maxFps : 0;
+    this.renderer = new WebGLRenderer({ canvas, antialias: q.antialias, alpha: true, powerPreference: 'low-power' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.maxDpr));
     this.renderer.setClearColor(0x000000, 0);
 
     this.camera = new PerspectiveCamera(34, 1, 0.1, 50);
@@ -365,7 +371,16 @@ export class LobbyPreview {
       this.raf = requestAnimationFrame(tick);
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
-      if (!document.hidden) this.frame(dt);
+      if (document.hidden) return;
+      // Frame cap (mid throttle): accumulate dt and only render once minFrame elapses.
+      if (this.minFrame > 0) {
+        this.acc += dt;
+        if (this.acc < this.minFrame) return;
+        this.frame(this.acc);
+        this.acc = 0;
+      } else {
+        this.frame(dt);
+      }
     };
     this.raf = requestAnimationFrame(tick);
   }

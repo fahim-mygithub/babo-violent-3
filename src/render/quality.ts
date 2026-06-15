@@ -95,6 +95,25 @@ export function setTierOverride(tier: Tier): void {
 /** Whether to mount the live animated lobby preview (false on low → static icon). */
 export const shouldMountPreview = (): boolean => QUALITY.lobbyPreview;
 
+/** Throttle settings for the live lobby preview renderer (S3.8). */
+export interface PreviewQuality {
+  antialias: boolean;
+  /** Device-pixel-ratio ceiling for the preview canvas. */
+  maxDpr: number;
+  /** Frame cap; 0 = uncapped (high). */
+  maxFps: number;
+}
+
+/**
+ * Lobby-preview render throttle per tier. High runs full (AA on, DPR≤2, uncapped);
+ * mid throttles (AA off, DPR≤1, ~30fps). Low never mounts the live preview, so its
+ * values are only a defensive fallback.
+ */
+export function previewQuality(): PreviewQuality {
+  if (QUALITY.tier === 'high') return { antialias: true, maxDpr: 2, maxFps: 0 };
+  return { antialias: false, maxDpr: 1, maxFps: 30 };
+}
+
 // ---------------------------------------------------------------------------
 // S3.3 — non-hero surface material factory (Standard → Lambert → Basic).
 //

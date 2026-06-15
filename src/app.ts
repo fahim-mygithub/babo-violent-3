@@ -13,6 +13,8 @@ import type { GameRenderer, WorldView } from './render/renderer';
 import type { Hud } from './render/hud';
 import type { ScreenFx } from './render/screenfx';
 import type { LobbyPreview } from './render/lobbyPreview';
+import { shouldMountPreview } from './render/quality';
+import { makeGunIcon } from './render/gunIcons';
 import { InputManager } from './input';
 import type { InputSource } from './input';
 import { TouchControls, shouldUseTouch } from './touch/touchControls';
@@ -24,6 +26,10 @@ import type { ClientSession } from './net/client';
 import { sanitizeName, type MatchSettings } from './net/types';
 
 type Role = 'local' | 'host' | 'client';
+
+// Re-export the node-safe lobby-preview gate (defined in quality.ts) so callers /
+// tests can read it from the app entry without pulling the DOM-heavy LobbyPreview.
+export { shouldMountPreview } from './render/quality';
 
 const NAME_KEY = 'bv3-name';
 const CLASS_KEY = 'bv3-class';
@@ -52,6 +58,7 @@ export class App {
   // Animated lobby showcase (persists across lobby re-renders; re-parented each time)
   private lobbyPreview: LobbyPreview | null = null;
   private previewCanvas: HTMLCanvasElement | null = null;
+  private previewIcon: HTMLCanvasElement | null = null; // static gun-icon fallback (low tier)
   private previewLoading = false; // guards the async LobbyPreview import from double-construction
   private prefetched = false;
 
@@ -146,6 +153,12 @@ export class App {
   private mountLobbyPreview(): void {
     const slot = this.container.querySelector('#preview-slot');
     if (!slot) return;
+    // S3.8: on low we never spin up a WebGL preview context — render a static gun
+    // icon instead and bail before any start()/setLoadout()/resize() call.
+    if (!shouldMountPreview()) {
+      this.renderStaticGunIcon(slot);
+      return;
+    }
     // Already constructed: just re-parent + restate (synchronous, no flicker).
     if (this.lobbyPreview && this.previewCanvas) {
       slot.insertBefore(this.previewCanvas, slot.firstChild);
@@ -180,11 +193,26 @@ export class App {
       .catch(() => { this.previewLoading = false; });
   }
 
+  /**
+   * Static gun-icon fallback for the low tier (no WebGL preview context). Draws the
+   * 2D selector icon for the current gun into the preview slot; re-rendered on each
+   * loadout pick. Tolerates being called repeatedly (replaces the prior icon).
+   */
+  private renderStaticGunIcon(slot: Element): void {
+    const icon = makeGunIcon(this.gunId);
+    icon.className = 'preview-canvas preview-static';
+    this.previewIcon?.remove();
+    this.previewIcon = icon;
+    slot.insertBefore(icon, slot.firstChild);
+  }
+
   private disposeLobbyPreview(): void {
     this.lobbyPreview?.dispose();
     this.previewCanvas?.remove();
+    this.previewIcon?.remove();
     this.lobbyPreview = null;
     this.previewCanvas = null;
+    this.previewIcon = null;
   }
 
   /**
