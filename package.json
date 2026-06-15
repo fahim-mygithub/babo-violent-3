@@ -17,6 +17,7 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^25.9.3",
     "@types/three": "^0.169.0",
     "jsdom": "^29.1.1",

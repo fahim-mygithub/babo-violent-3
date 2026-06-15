@@ -4,3 +4,7 @@ dist/
 .DS_Store
 tmp-review/
 .worktrees/
+# PWA icons are rasterized from favicon.svg at build time — never commit the PNGs
+icon-192.png
+icon-512.png
+public/icon-*.png
