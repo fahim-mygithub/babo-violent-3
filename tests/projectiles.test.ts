@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { C } from '../src/data/constants';
+import { C, FLAGS } from '../src/data/constants';
 import type { GameSim } from '../src/sim/sim';
-import { projectileSystem } from '../src/sim/systems/projectiles';
+import { capProjectiles, projectileSystem } from '../src/sim/systems/projectiles';
 import type { PlayerState, Projectile, Team } from '../src/sim/types';
-import { makeSim, teleport } from './helpers';
+import { makeSim, teleport, tickCombat } from './helpers';
 
 // These tests drive projectileSystem directly (not sim.step()) so they depend
 // only on this system plus sim.ts helpers — sibling systems are in flux.
@@ -21,7 +21,7 @@ function addBabo(sim: GameSim, name: string, team: Team, x: number, y: number): 
 function push(sim: GameSim, partial: Partial<Projectile>): Projectile {
   const pr: Projectile = {
     id: sim.newId(), kind: 'bullet', gun: 'stinger', owner: -999, team: -1,
-    x: 0, y: 0, vx: 0, vy: 0, damage: 10, dist: 0, maxDist: C.PROJECTILE_MAX_DIST,
+    x: 0, y: 0, ox: 0, oy: 0, vx: 0, vy: 0, damage: 10, dist: 0, maxDist: C.PROJECTILE_MAX_DIST,
     ...partial,
   };
   sim.projectiles.push(pr);
@@ -159,5 +159,67 @@ describe('projectileSystem', () => {
     tick(sim, 30);
     expect(victim.hp).toBe(C.MAX_HP);
     expect(sim.projectiles.length).toBe(0);
+  });
+});
+
+describe('S2 foundation (Task 56)', () => {
+  it('FLAGS.PROJECTILE_LANCE defaults OFF; MAX_PROJECTILES and LANCE_KNOCK are exposed', () => {
+    expect(FLAGS.PROJECTILE_LANCE).toBe(false);
+    expect(FLAGS.MAX_PROJECTILES).toBe(256);
+    expect(C.LANCE_KNOCK).toBe(10);
+  });
+
+  it('tickCombat runs weaponSystem then projectileSystem (self-check)', async () => {
+    const sim = await makeSim();
+    const p = addBabo(sim, 'A', 0, 0, -4);
+    p.gun = 'stinger';
+    p.mag = 30;
+    sim.setInput(p.id, { ...p.input, buttons: 1 /* BTN.FIRE */, aim: 0 });
+    tickCombat(sim, 1);
+    // A bullet was spawned by weaponSystem and advanced by projectileSystem.
+    expect(sim.events.some((e) => e.t === 'shot')).toBe(true);
+    expect(sim.projectiles.some((pr) => pr.x > 0.65)).toBe(true);
+  });
+});
+
+describe('MAX_PROJECTILES grief guard (Task 60)', () => {
+  it('drops the oldest BULLET, never a rocket/flame/rail', () => {
+    const arr: { id: number; kind: string }[] = [];
+    // oldest is a rocket, then a bullet, then flames — cap should remove the bullet
+    arr.push({ id: 1, kind: 'rocket' });
+    arr.push({ id: 2, kind: 'bullet' });
+    arr.push({ id: 3, kind: 'flame' });
+    arr.push({ id: 4, kind: 'bullet' });
+    capProjectiles(arr, 3); // over by 1
+    expect(arr.length).toBe(3);
+    expect(arr.find((p) => p.id === 1)).toBeDefined();   // rocket kept
+    expect(arr.find((p) => p.id === 3)).toBeDefined();   // flame kept
+    expect(arr.find((p) => p.id === 2)).toBeUndefined(); // oldest bullet dropped
+    expect(arr.find((p) => p.id === 4)).toBeDefined();   // newer bullet kept
+  });
+
+  it('drops nothing when no bullet exists even if over cap (grief-guard only)', () => {
+    const arr: { id: number; kind: string }[] = [{ id: 1, kind: 'rocket' }, { id: 2, kind: 'flame' }];
+    capProjectiles(arr, 1);
+    expect(arr.length).toBe(2); // never deletes a live rocket/flame
+  });
+
+  it('drops oldest-first, multiple bullets, until at cap (order-deterministic front scan)', () => {
+    const arr: { id: number; kind: string }[] = [
+      { id: 1, kind: 'bullet' }, { id: 2, kind: 'rocket' },
+      { id: 3, kind: 'bullet' }, { id: 4, kind: 'bullet' },
+    ];
+    capProjectiles(arr, 2); // over by 2 → drop the two oldest bullets (1 then 3)
+    expect(arr.length).toBe(2);
+    expect(arr.find((p) => p.id === 1)).toBeUndefined();
+    expect(arr.find((p) => p.id === 3)).toBeUndefined();
+    expect(arr.find((p) => p.id === 2)).toBeDefined(); // rocket never dropped
+    expect(arr.find((p) => p.id === 4)).toBeDefined(); // newest bullet kept
+  });
+
+  it('is a no-op under the cap', () => {
+    const arr: { id: number; kind: string }[] = [{ id: 1, kind: 'bullet' }];
+    capProjectiles(arr, 256);
+    expect(arr.length).toBe(1);
   });
 });

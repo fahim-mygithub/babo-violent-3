@@ -1,0 +1,402 @@
+import { angleDiff } from '../core/math';
+import { viewportSize } from '../core/viewport';
+import { C } from '../data/constants';
+import type { PlayerInput, PlayerState } from '../sim/types';
+import { BTN } from '../sim/types';
+import type { InputSource } from '../input';
+
+const STICK_R = 56;
+const AIM_STICK_R = 56;
+const AIM_DEADZONE = 0.25;
+const MOVE_DEADZONE = 0.12;
+const AIM_MIN_DIST = 3;
+const AIM_MAX_DIST = 16;
+/** Pixels of drag for a full-range grenade throw (mirrors desktop RMB hold-time). */
+const ARC_DRAG_PX = 140;
+
+/**
+ * Aim-assist (S1.6). Soft angular magnetism only — STRENGTH is capped at 0.30 so
+ * the producer can never snap onto a target, only nudge toward it. Lead is
+ * intentionally NOT applied (rotate-to-target only); the Lance is additionally
+ * lead-exempt by contract (S2.5) so it stays correct by construction if lead
+ * ever lands.
+ */
+const ASSIST = { CONE: 0.30, STRENGTH: 0.30, RANGE: 22 } as const;
+
+/**
+ * Touch input producer (mobile). Implements the same {@link InputSource} surface
+ * as the desktop {@link InputManager} so the game loop can swap producers without
+ * any sim change. A constructed-but-idle TouchControls emits a neutral input.
+ *
+ * Left half (bottom) is a floating-origin movement stick → mx/my.
+ */
+/**
+ * Touch-effective detection (S1.12). An explicit `bv3-touch` localStorage value
+ * (`on`/`off`) wins; otherwise auto-detect a coarse, hover-less pointer (phone /
+ * tablet). On desktop (no coarse pointer) this is false, so the App keeps the
+ * kbm source and never builds the touch layer.
+ */
+export function shouldUseTouch(): boolean {
+  const pref = localStorage.getItem('bv3-touch') ?? 'auto';
+  if (pref === 'on') return true;
+  if (pref === 'off') return false;
+  const coarse = typeof matchMedia === 'function'
+    && matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches;
+  return !!coarse;
+}
+
+export class TouchControls implements InputSource {
+  enabled = true;
+  showScores = false;
+
+  /** App callback for the LEAVE button (returns to the menu). */
+  onLeave?: () => void;
+
+  // Read-state for renderer/HUD
+  aimActive = false;
+  aimAngle = 0;
+  aimMag = 0;
+  firing = false;
+  grenadeArc = { active: false, aim: 0, dist: 0 };
+  /** One-shot: the release tick still emits the final arc aim/dist (THROW already
+   *  dropped) so the sim's falling-edge throw reads the full charged range. */
+  private grenadeReleasing = false;
+
+  private layer: HTMLDivElement;
+  private seq = 1;
+  private moveX = 0;
+  private moveY = 0;
+
+  /** Latest world view for aim-assist. Null until setWorld is called. assist()
+   *  only iterates players, so we hold the iterable reference (no per-tick copy). */
+  private view: { players: Iterable<PlayerState> } | null = null;
+
+  private leftId = -1;
+  private leftOX = 0;
+  private leftOY = 0;
+
+  private rightId = -1;
+  private rightOX = 0;
+  private rightOY = 0;
+
+  private grenOX = 0;
+  private grenOY = 0;
+
+  // Consume-on-first-sample latches: a tap sets the bit; sample() emits it once
+  // then clears it, so each tap fires at most one bit regardless of ticks/frame.
+  private reloadLatch = false;
+  private pickupLatch = false;
+
+  /** SKILL button hold → BTN.ABILITY (supports hold-to-channel abilities). */
+  private abilityHeld = false;
+  /** Captured pointer id for the SKILL hold (-1 when not held). */
+  private skillPointerId = -1;
+
+  /** Edge buttons (SKILL/RELOAD/EQUIP/PICKUP/scoreboard/leave). Disposed with the layer. */
+  private buttons: HTMLButtonElement[] = [];
+  private grenBtnId = -1;
+
+  constructor(private container: HTMLElement, private localId: number) {
+    this.layer = document.createElement('div');
+    this.layer.id = 'touch-layer';
+    this.layer.style.touchAction = 'none';
+    this.container.appendChild(this.layer);
+    this.layer.addEventListener('pointerdown', this.onDown);
+    this.layer.addEventListener('pointermove', this.onMove);
+    this.layer.addEventListener('pointerup', this.onUp);
+    this.layer.addEventListener('pointercancel', this.resetNeutral);
+    window.addEventListener('blur', this.resetNeutral);
+    // Global fallback: if the SKILL hold's pointer is released anywhere off the
+    // button (slide-off, lost capture), drop BTN.ABILITY so it can't stick on.
+    window.addEventListener('pointerup', this.onGlobalPointerUp);
+    document.addEventListener('visibilitychange', this.onVisibility);
+    this.buildButtons();
+  }
+
+  /** Clear the SKILL hold (button release, lost capture, or global fallback). */
+  private releaseSkill(): void {
+    this.abilityHeld = false;
+    this.skillPointerId = -1;
+  }
+
+  /** Window-level safety net: a pointerup matching the SKILL hold clears it. */
+  private onGlobalPointerUp = (e: PointerEvent): void => {
+    if (this.skillPointerId !== -1 && e.pointerId === this.skillPointerId) this.releaseSkill();
+  };
+
+  /**
+   * Edge buttons live inside #touch-layer but `stopPropagation` so the layer's
+   * stick handlers never see them. `touch-action: manipulation` kills the
+   * double-tap-zoom delay without disabling the press itself.
+   */
+  private buildButtons(): void {
+    const make = (id: string, label: string): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.id = id;
+      b.className = 'tc-btn';
+      b.textContent = label;
+      b.style.touchAction = 'manipulation';
+      this.layer.appendChild(b);
+      this.buttons.push(b);
+      return b;
+    };
+
+    const skill = make('tc-skill', 'SKILL');
+    skill.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      this.abilityHeld = true;
+      this.skillPointerId = e.pointerId;
+      // Capture so the matching pointerup lands on the button even if the thumb
+      // slides off; the window-level fallback below covers the (jsdom / capture
+      // loss) cases where it doesn't, so BTN.ABILITY can never stick on.
+      skill.setPointerCapture?.(e.pointerId);
+    });
+    const releaseSkill = (e: PointerEvent): void => { e.stopPropagation(); this.releaseSkill(); };
+    skill.addEventListener('pointerup', releaseSkill);
+    skill.addEventListener('pointercancel', releaseSkill);
+    skill.addEventListener('lostpointercapture', () => this.releaseSkill());
+
+    const reload = make('tc-reload', 'RELOAD');
+    reload.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.tapReload(); });
+
+    const pickup = make('tc-pickup', 'PICKUP');
+    // Visible only while a pickup prompt is live (App toggles via setPickupVisible).
+    pickup.style.display = 'none';
+    pickup.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.tapPickup(); });
+
+    const equip = make('tc-equip', 'EQUIP');
+    equip.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      this.grenBtnId = e.pointerId;
+      this.beginGrenade(e.clientX, e.clientY);
+      equip.setPointerCapture?.(e.pointerId);
+    });
+    equip.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.grenBtnId) return;
+      e.stopPropagation();
+      this.moveGrenade(e.clientX, e.clientY);
+    });
+    const endGren = (e: PointerEvent): void => {
+      if (e.pointerId !== this.grenBtnId) return;
+      e.stopPropagation();
+      this.grenBtnId = -1;
+      this.endGrenade();
+    };
+    equip.addEventListener('pointerup', endGren);
+    equip.addEventListener('pointercancel', endGren);
+
+    const scores = make('tc-scores', 'SCORE');
+    scores.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.showScores = !this.showScores; });
+
+    const leave = make('tc-leave', 'LEAVE');
+    leave.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.onLeave?.(); });
+  }
+
+  /** Show/hide the PICKUP button — App drives this from the live HUD pickup prompt. */
+  setPickupVisible(on: boolean): void {
+    const pk = this.layer.querySelector<HTMLElement>('#tc-pickup');
+    if (pk) pk.style.display = on ? '' : 'none';
+  }
+
+  private onDown = (e: PointerEvent): void => {
+    e.preventDefault();
+    const { w, h } = viewportSize();
+    const inLeft = e.clientX < w * 0.45 && e.clientY > h * 0.5;
+    const inRight = e.clientX > w * 0.45 && e.clientY > h * 0.6;
+    if (this.leftId === -1 && inLeft) {
+      this.leftId = e.pointerId;
+      this.leftOX = e.clientX;
+      this.leftOY = e.clientY;
+      this.layer.setPointerCapture?.(e.pointerId);
+    } else if (this.rightId === -1 && inRight) {
+      this.rightId = e.pointerId;
+      this.rightOX = e.clientX;
+      this.rightOY = e.clientY;
+      this.aimActive = true;
+      this.layer.setPointerCapture?.(e.pointerId);
+    }
+  };
+
+  private onMove = (e: PointerEvent): void => {
+    if (e.pointerId === this.leftId) {
+      const dx = e.clientX - this.leftOX;
+      const dy = e.clientY - this.leftOY;
+      const mag = Math.hypot(dx, dy);
+      const m = Math.min(1, mag / STICK_R);
+      if (m < MOVE_DEADZONE || mag < 1e-6) {
+        this.moveX = 0;
+        this.moveY = 0;
+      } else {
+        this.moveX = (dx / mag) * m;
+        this.moveY = (dy / mag) * m;
+      }
+    } else if (e.pointerId === this.rightId) {
+      const dx = e.clientX - this.rightOX;
+      const dy = e.clientY - this.rightOY;
+      const mag = Math.hypot(dx, dy);
+      this.aimMag = Math.min(1, mag / AIM_STICK_R);
+      if (mag > 1e-6) this.aimAngle = Math.atan2(dy, dx);
+      // Autofire while deflected past the dead-zone. Gating by reload/heat/ammo
+      // is delegated to the sim weaponSystem; the touch layer only OR-s FIRE.
+      this.firing = this.aimMag > AIM_DEADZONE;
+    }
+  };
+
+  private onUp = (e: PointerEvent): void => {
+    if (e.pointerId === this.leftId) {
+      this.leftId = -1;
+      this.moveX = 0;
+      this.moveY = 0;
+    } else if (e.pointerId === this.rightId) {
+      this.rightId = -1;
+      this.aimActive = false;
+      this.firing = false;
+      this.aimMag = 0;
+    }
+  };
+
+  /** Feed the current world view + local player id for aim-assist. assist() only
+   *  reads players, so store the iterable reference — no fresh array per tick. */
+  setWorld(view: { players: Iterable<PlayerState> } | null, localId: number): void {
+    this.view = view;
+    this.localId = localId;
+  }
+
+  /**
+   * Soft angular magnetism toward the nearest hostile inside the assist cone +
+   * range. Never snaps (STRENGTH ≤ 0.30) and never leads (rotate-to-target
+   * only). Pure: no allocation, tolerant of an unset/empty world.
+   */
+  private assist(rawAim: number): number {
+    const v = this.view;
+    if (!v) return rawAim;
+    let me: PlayerState | undefined;
+    for (const p of v.players) if (p.id === this.localId) { me = p; break; }
+    if (!me) return rawAim;
+    const px = me.x;
+    const py = me.y;
+    let bestErr: number = ASSIST.CONE;
+    let bestAng = 0;
+    let found = false;
+    for (const e of v.players) {
+      if (!e.alive || e.id === this.localId) continue;
+      if (me.team !== -1 && e.team === me.team) continue; // never assist onto teammates
+      const dx = e.x - px;
+      const dy = e.y - py;
+      if (Math.hypot(dx, dy) > ASSIST.RANGE) continue;
+      const ang = Math.atan2(dy, dx);
+      const err = Math.abs(angleDiff(rawAim, ang));
+      if (err < bestErr) { bestErr = err; bestAng = ang; found = true; }
+    }
+    if (!found) return rawAim;
+    // Lance lead-skip contract (S2.5): lead is NOT applied here. Lead is a no-op
+    // in P2 (rotate-to-target only); when it lands the Lance stays lead-exempt
+    // because its hitscan needs no lead. Kept explicit so it's correct by
+    // construction.
+    return rawAim + angleDiff(rawAim, bestAng) * ASSIST.STRENGTH * (1 - bestErr / ASSIST.CONE);
+  }
+
+  /** EQUIPMENT hold begins the grenade arc, suspending the aim stick. */
+  beginGrenade(x: number, y: number): void {
+    this.grenadeArc.active = true;
+    this.grenadeArc.aim = 0;
+    this.grenadeArc.dist = C.GRENADE_MIN_RANGE;
+    this.grenOX = x;
+    this.grenOY = y;
+  }
+
+  /** Drag distance scales throw range; direction sets the arc aim (mirrors RMB). */
+  moveGrenade(x: number, y: number): void {
+    if (!this.grenadeArc.active) return;
+    const dx = x - this.grenOX;
+    const dy = y - this.grenOY;
+    this.grenadeArc.aim = Math.atan2(dy, dx);
+    const m = Math.min(1, Math.hypot(dx, dy) / ARC_DRAG_PX);
+    this.grenadeArc.dist = C.GRENADE_MIN_RANGE + (C.GRENADE_MAX_RANGE - C.GRENADE_MIN_RANGE) * m;
+  }
+
+  /**
+   * Release: drop the arc but carry its final aim/dist through ONE more sample so
+   * the sim's falling-edge releaseThrow (which reads input.aimDist on the release
+   * tick) sees the full charged drag range, not the reset-to-min default.
+   */
+  endGrenade(): void {
+    this.grenadeArc.active = false;
+    this.grenadeReleasing = true;
+  }
+
+  /** Tap RELOAD: latched, consumed on the next sample (one emit per tap). */
+  tapReload(): void { this.reloadLatch = true; }
+  /** Tap PICKUP: latched, consumed on the next sample (one emit per tap). */
+  tapPickup(): void { this.pickupLatch = true; }
+
+  /** Zero every input + latch — blur/pointercancel/visibility-hidden recovery. */
+  private resetNeutral = (): void => {
+    this.moveX = 0;
+    this.moveY = 0;
+    this.aimActive = false;
+    this.firing = false;
+    this.aimMag = 0;
+    this.grenadeArc.active = false;
+    this.grenadeReleasing = false;
+    this.reloadLatch = false;
+    this.pickupLatch = false;
+    this.abilityHeld = false;
+    this.skillPointerId = -1;
+    this.grenBtnId = -1;
+    this.leftId = -1;
+    this.rightId = -1;
+  };
+
+  private onVisibility = (): void => {
+    if (document.hidden) this.resetNeutral();
+  };
+
+  sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
+    let buttons = 0;
+    // Modal grenade arc: while aiming a throw, the gun must NOT fire along the
+    // drag direction — suppress FIRE so the arc is fully modal.
+    if (this.firing && !this.grenadeArc.active) buttons |= BTN.FIRE;
+    if (this.abilityHeld) buttons |= BTN.ABILITY;
+    // Aim-assist is on by default; explicit `false` (a settings toggle, S1.6)
+    // disables it. Read defensively so headless tests keep assist on. Gate it on
+    // aimActive so a RELEASED stick doesn't magnetically track enemies.
+    const assistOn = (window as { __bv3?: { touchAssist?: boolean } }).__bv3?.touchAssist !== false;
+    let aim = (assistOn && this.aimActive) ? this.assist(this.aimAngle) : this.aimAngle;
+    let aimDist = this.aimActive
+      ? AIM_MIN_DIST + (AIM_MAX_DIST - AIM_MIN_DIST) * this.aimMag
+      : AIM_MIN_DIST;
+    // The grenade arc takes priority over the gun aim while held: OR THROW and
+    // override aim/dist from the drag (no aim-assist on the arc).
+    if (this.grenadeArc.active) {
+      buttons |= BTN.THROW;
+      aim = this.grenadeArc.aim;
+      aimDist = this.grenadeArc.dist;
+    } else if (this.grenadeReleasing) {
+      // Release tick: THROW already dropped (falling edge) but still hand the sim
+      // the final charged drag aim/dist so the throw reaches the dragged range.
+      aim = this.grenadeArc.aim;
+      aimDist = this.grenadeArc.dist;
+      this.grenadeReleasing = false;
+    }
+    // Consume-on-first-sample: emit each tapped bit at most once.
+    if (this.reloadLatch) { buttons |= BTN.RELOAD; this.reloadLatch = false; }
+    if (this.pickupLatch) { buttons |= BTN.PICKUP; this.pickupLatch = false; }
+    return {
+      mx: this.moveX, my: this.moveY,
+      aim, aimDist,
+      buttons, seq: this.seq++,
+    };
+  }
+
+  dispose(): void {
+    this.layer.removeEventListener('pointerdown', this.onDown);
+    this.layer.removeEventListener('pointermove', this.onMove);
+    this.layer.removeEventListener('pointerup', this.onUp);
+    this.layer.removeEventListener('pointercancel', this.resetNeutral);
+    window.removeEventListener('blur', this.resetNeutral);
+    window.removeEventListener('pointerup', this.onGlobalPointerUp);
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    this.layer.remove();
+  }
+}

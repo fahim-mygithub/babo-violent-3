@@ -1,10 +1,16 @@
-import * as THREE from 'three';
+import { BoxGeometry, BufferGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide, Float32BufferAttribute, Fog, HemisphereLight, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
 import { C } from '../data/constants';
+import { viewportSize, onViewportChange } from '../core/viewport';
+import { GUNS } from '../data/weapons';
 import type { MapDef } from '../data/maps';
 import type { GameEvent, ModeState, PlayerState } from '../sim/types';
 import type { BloodPool, FireZone, Grenade, Pickup, Projectile, SmokeZone } from '../sim/types';
 import { BaboPool } from './babos';
 import { EffectsLayer } from './effects';
+import { laserLength } from './aimLaser';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { QUALITY } from './quality';
+import { surfaceMat } from './surfaceMat';
 import { SplatMap } from './splatmap';
 import { makeFloorTexture, makeWallTexture } from './textures';
 
@@ -23,42 +29,82 @@ export interface WorldView {
 const CAM_ANGLE = (65 * Math.PI) / 180; // steep top-down
 const CAM_DIST = 21;
 
+/**
+ * Pure aim-lead offset (S1.5/S1.13). Slides the camera target a touch toward the
+ * aim so the player sees more of where they're shooting. `aimLeadScale` damps the
+ * lead on touch (0.35) so the auto-fire stick doesn't yank the camera. At
+ * `aimLeadScale === 1` this is byte-identical to the original inline math, so
+ * desktop is unchanged. Zero `aimDist` → zero offset (no lead, no alloc concern).
+ */
+export function cameraLead(aim: number, aimDist: number, aimLeadScale: number): { dx: number; dy: number } {
+  const lead = 0.18 * aimLeadScale;
+  return { dx: Math.cos(aim) * aimDist * lead * 0.3, dy: Math.sin(aim) * aimDist * lead * 0.3 };
+}
+
 export class GameRenderer {
   readonly canvas: HTMLCanvasElement;
-  private renderer: THREE.WebGLRenderer;
-  private scene = new THREE.Scene();
-  private camera: THREE.PerspectiveCamera;
+
+  // Touch camera scalars (S1.13). Defaults reproduce the desktop camera exactly:
+  // 1× distance, no vertical target bias, full aim-lead. The App raises these for
+  // touch (+ portrait zoom) on enterMatch and orientation change.
+  camDistScale = 1;
+  camTargetYBias = 0;
+  aimLeadScale = 1;
+
+  private renderer: WebGLRenderer;
+  private scene = new Scene();
+  private camera: PerspectiveCamera;
   private splat: SplatMap;
   private babos: BaboPool;
   private effects: EffectsLayer;
+  // Merged static wall geometry (low/mid mergeStatics path); null on high.
+  private wallGeo: BufferGeometry | null = null;
 
-  private camTarget = new THREE.Vector3();
+  private camTarget = new Vector3();
   private shake = 0;
   private time = 0;
-  private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private raycaster = new THREE.Raycaster();
-  private ndc = new THREE.Vector2();
-  private projVec = new THREE.Vector3();
+  private groundPlane = new Plane(new Vector3(0, 1, 0), 0);
+  private raycaster = new Raycaster();
+  private ndc = new Vector2();
+  private projVec = new Vector3();
+  private groundHit = new Vector3();
+
+  // Cached viewport size (CSS px) — the unprojection denominator. groundPoint and
+  // project MUST read these, not window.innerWidth/Height, so aim stays correct as
+  // the iOS URL bar slides. On a stable desktop viewport these equal innerWidth/Height.
+  private vw = 0;
+  private vh = 0;
+  private offViewport: (() => void) | null = null;
+
+  // Touch aim laser (S1.10) — cosmetic, local-only. One reused Line + reticle,
+  // built lazily on first activation so desktop never pays for it. setAimState
+  // (called each frame from the touch read-state) toggles + aims it.
+  private laser: Line | null = null;
+  private laserPos: Float32BufferAttribute | null = null;
+  private reticle: Mesh | null = null;
+  private aimActive = false;
+  private aimAngle = 0;
 
   constructor(container: HTMLElement, private map: MapDef) {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'game-canvas';
     container.appendChild(this.canvas);
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    window.addEventListener('resize', this.onResize);
+    this.renderer = new WebGLRenderer({ canvas: this.canvas, antialias: QUALITY.antialias, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
 
-    this.scene.background = new THREE.Color(0x0b0c10);
-    this.scene.fog = new THREE.Fog(0x0b0c10, 55, 95);
+    this.scene.background = new Color(0x0b0c10);
+    this.scene.fog = new Fog(0x0b0c10, 55, 95);
 
-    this.camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 0.5, 200);
+    const { w: vw0, h: vh0 } = viewportSize();
+    this.camera = new PerspectiveCamera(46, vw0 / vh0, 0.5, 200);
+    this.applyViewport();
+    this.offViewport = onViewportChange(this.applyViewport);
 
-    this.scene.add(new THREE.HemisphereLight(0xcdd6e8, 0x3a3430, 1.5));
-    const key = new THREE.DirectionalLight(0xfff2e0, 2.4);
+    this.scene.add(new HemisphereLight(0xcdd6e8, 0x3a3430, 1.5));
+    const key = new DirectionalLight(0xfff2e0, 2.4);
     key.position.set(18, 30, 12);
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0x7a88c0, 0.8);
+    const fill = new DirectionalLight(0x7a88c0, 0.8);
     fill.position.set(-20, 22, -16);
     this.scene.add(fill);
 
@@ -73,17 +119,17 @@ export class GameRenderer {
     const { w, h } = this.map.size;
     const floorTex = makeFloorTexture();
     floorTex.repeat.set(w / 16, h / 16);
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, h),
-      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.92 }),
+    const floor = new Mesh(
+      new PlaneGeometry(w, h),
+      surfaceMat({ map: floorTex, roughness: 0.92 }),
     );
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
 
     // Persistent gore layer draped over the floor
-    const splatPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, h),
-      new THREE.MeshBasicMaterial({ map: this.splat.texture, transparent: true, depthWrite: false }),
+    const splatPlane = new Mesh(
+      new PlaneGeometry(w, h),
+      new MeshBasicMaterial({ map: this.splat.texture, transparent: true, depthWrite: false }),
     );
     splatPlane.rotation.x = -Math.PI / 2;
     // Splat-map stamp space has +y up; the floor plane after rotation maps
@@ -95,48 +141,66 @@ export class GameRenderer {
     // Blood pit: darkened depression ring
     if (this.map.bloodPit) {
       const pit = this.map.bloodPit;
-      const pitMesh = new THREE.Mesh(
-        new THREE.CircleGeometry(pit.r, 40),
-        new THREE.MeshStandardMaterial({ color: 0x14080a, roughness: 0.6 }),
+      const pitMesh = new Mesh(
+        new CircleGeometry(pit.r, 40),
+        surfaceMat({ color: 0x14080a, roughness: 0.6 }),
       );
       pitMesh.rotation.x = -Math.PI / 2;
       pitMesh.position.set(pit.x, 0.008, pit.y);
       this.scene.add(pitMesh);
-      const rim = new THREE.Mesh(
-        new THREE.RingGeometry(pit.r, pit.r + 0.35, 40),
-        new THREE.MeshBasicMaterial({ color: 0x3a2a20, side: THREE.DoubleSide }),
+      const rim = new Mesh(
+        new RingGeometry(pit.r, pit.r + 0.35, 40),
+        new MeshBasicMaterial({ color: 0x3a2a20, side: DoubleSide }),
       );
       rim.rotation.x = -Math.PI / 2;
       rim.position.set(pit.x, 0.01, pit.y);
       this.scene.add(rim);
     }
 
-    // Walls
+    // Walls. The 6-group material layout per box keeps the side faces (wallMat)
+    // distinct from the top/bottom caps (topMat). On low/mid (mergeStatics) the
+    // 18-ish boxes collapse into ONE merged geometry → 2 draw calls instead of N;
+    // on high (desktop byte-identical) the proven per-wall meshes stay.
     const wallTex = makeWallTexture();
-    const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.7, metalness: 0.25 });
-    const topMat = new THREE.MeshStandardMaterial({ color: 0x2c3138, roughness: 0.8 });
-    for (const wall of this.map.walls) {
-      const geo = new THREE.BoxGeometry(wall.w, wall.height, wall.h);
-      const mats = [wallMat, wallMat, topMat, topMat, wallMat, wallMat];
-      const mesh = new THREE.Mesh(geo, mats);
-      mesh.position.set(wall.x, wall.height / 2, wall.y);
-      this.scene.add(mesh);
+    const wallMat = surfaceMat({ map: wallTex, roughness: 0.7, metalness: 0.25 });
+    const topMat = surfaceMat({ color: 0x2c3138, roughness: 0.8 });
+    if (QUALITY.mergeStatics) {
+      const boxes: BufferGeometry[] = [];
+      for (const wall of this.map.walls) {
+        const geo = new BoxGeometry(wall.w, wall.height, wall.h);
+        geo.translate(wall.x, wall.height / 2, wall.y); // bake world position in
+        boxes.push(geo);
+      }
+      const merged = mergeWalls(boxes); // disposes the source boxes internally
+      if (merged) {
+        this.wallGeo = merged;
+        // 2-group layout: side faces → wallMat, top/bottom caps → topMat.
+        this.scene.add(new Mesh(merged, [wallMat, topMat]));
+      }
+    } else {
+      const wallMats = [wallMat, wallMat, topMat, topMat, wallMat, wallMat];
+      for (const wall of this.map.walls) {
+        const geo = new BoxGeometry(wall.w, wall.height, wall.h);
+        const mesh = new Mesh(geo, wallMats);
+        mesh.position.set(wall.x, wall.height / 2, wall.y);
+        this.scene.add(mesh);
+      }
     }
 
     // Equipment node pads
     for (const node of this.map.equipmentNodes) {
-      const pad = new THREE.Mesh(
-        new THREE.RingGeometry(0.6, 0.78, 26),
-        new THREE.MeshBasicMaterial({ color: 0x4a90c8, transparent: true, opacity: 0.4, side: THREE.DoubleSide }),
+      const pad = new Mesh(
+        new RingGeometry(0.6, 0.78, 26),
+        new MeshBasicMaterial({ color: 0x4a90c8, transparent: true, opacity: 0.4, side: DoubleSide }),
       );
       pad.rotation.x = -Math.PI / 2;
       pad.position.set(node.x, 0.015, node.y);
       this.scene.add(pad);
     }
     for (const node of this.map.healthNodes) {
-      const pad = new THREE.Mesh(
-        new THREE.RingGeometry(0.6, 0.78, 26),
-        new THREE.MeshBasicMaterial({ color: 0xc84a4a, transparent: true, opacity: 0.4, side: THREE.DoubleSide }),
+      const pad = new Mesh(
+        new RingGeometry(0.6, 0.78, 26),
+        new MeshBasicMaterial({ color: 0xc84a4a, transparent: true, opacity: 0.4, side: DoubleSide }),
       );
       pad.rotation.x = -Math.PI / 2;
       pad.position.set(node.x, 0.015, node.y);
@@ -185,6 +249,57 @@ export class GameRenderer {
     this.shake = Math.min(0.8, this.shake + amount);
   }
 
+  /**
+   * Touch aim state (S1.10). The App pushes the touch read-state each frame: the
+   * laser draws from the muzzle along `aimAngle` only while `active`. Building the
+   * GL objects is deferred to first activation so the desktop path never allocates
+   * them and the laser is never drawn there.
+   */
+  setAimState(aimAngle: number, active: boolean): void {
+    this.aimAngle = aimAngle;
+    this.aimActive = active;
+    if (active && !this.laser) this.buildLaser();
+  }
+
+  private buildLaser(): void {
+    const geo = new BufferGeometry();
+    this.laserPos = new Float32BufferAttribute(new Float32Array(6), 3); // 2 verts
+    geo.setAttribute('position', this.laserPos);
+    this.laser = new Line(geo, new LineBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.7 }));
+    this.laser.frustumCulled = false;
+    this.laser.visible = false;
+    this.scene.add(this.laser);
+    this.reticle = new Mesh(
+      new RingGeometry(0.22, 0.34, 20),
+      new MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.85, side: DoubleSide }),
+    );
+    this.reticle.rotation.x = -Math.PI / 2;
+    this.reticle.visible = false;
+    this.scene.add(this.reticle);
+  }
+
+  /** Update the reused laser/reticle from the local babo. Honest wall occlusion. */
+  private updateLaser(local: PlayerState | undefined): void {
+    if (!this.laser || !this.laserPos || !this.reticle) return;
+    const show = this.aimActive && !!local && local.alive;
+    this.laser.visible = show;
+    this.reticle.visible = show;
+    if (!show || !local) return;
+    const dirX = Math.cos(this.aimAngle);
+    const dirY = Math.sin(this.aimAngle);
+    const mx = local.x + dirX * 0.65; // muzzle just ahead of the babo
+    const my = local.y + dirY * 0.65;
+    const maxLen = GUNS[local.gun].range;
+    const len = laserLength(mx, my, this.aimAngle, maxLen, this.map.walls);
+    const ex = mx + dirX * len;
+    const ey = my + dirY * len;
+    const arr = this.laserPos.array as Float32Array;
+    arr[0] = mx; arr[1] = 0.5; arr[2] = my;
+    arr[3] = ex; arr[4] = 0.5; arr[5] = ey;
+    this.laserPos.needsUpdate = true;
+    this.reticle.position.set(ex, 0.04, ey);
+  }
+
   render(view: WorldView, localId: number, dt: number): void {
     this.time += dt;
     this.shake = Math.max(0, this.shake - dt * 1.8);
@@ -193,20 +308,21 @@ export class GameRenderer {
     let local: PlayerState | undefined;
     for (const p of view.players) if (p.id === localId) { local = p; break; }
     if (local && local.alive) {
-      const lead = 0.18; // slight aim lead
-      const tx = local.x + Math.cos(local.aim) * local.input.aimDist * lead * 0.3;
-      const ty = local.y + Math.sin(local.aim) * local.input.aimDist * lead * 0.3;
+      const { dx, dy } = cameraLead(local.aim, local.input.aimDist, this.aimLeadScale);
+      const tx = local.x + dx;
+      const ty = local.y + dy;
       this.camTarget.x += (tx - this.camTarget.x) * Math.min(1, dt * 7);
       this.camTarget.z += (ty - this.camTarget.z) * Math.min(1, dt * 7);
     }
     const sx = (Math.random() - 0.5) * this.shake * 0.7;
     const sy = (Math.random() - 0.5) * this.shake * 0.7;
+    const camDist = CAM_DIST * this.camDistScale;
     this.camera.position.set(
       this.camTarget.x + sx,
-      Math.sin(CAM_ANGLE) * CAM_DIST,
-      this.camTarget.z + Math.cos(CAM_ANGLE) * CAM_DIST + sy,
+      Math.sin(CAM_ANGLE) * camDist,
+      this.camTarget.z + Math.cos(CAM_ANGLE) * camDist + sy,
     );
-    this.camera.lookAt(this.camTarget.x + sx, 0, this.camTarget.z + sy);
+    this.camera.lookAt(this.camTarget.x + sx, 0, this.camTarget.z + this.camTargetYBias + sy);
 
     this.babos.update(view.players, dt, this.time, view.mode.leaderId);
     this.effects.sync(
@@ -214,6 +330,7 @@ export class GameRenderer {
       view.fires, view.smokes, view.pickups, view.mode, localId, this.time,
     );
     this.effects.update(dt);
+    this.updateLaser(local);
 
     this.splat.flush(this.renderer);
     this.renderer.render(this.scene, this.camera);
@@ -221,35 +338,78 @@ export class GameRenderer {
 
   /** Mouse position → sim ground coordinates. */
   groundPoint(clientX: number, clientY: number): { x: number; y: number } {
-    this.ndc.set((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
+    this.ndc.set((clientX / this.vw) * 2 - 1, -(clientY / this.vh) * 2 + 1);
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    const hit = new THREE.Vector3();
-    this.raycaster.ray.intersectPlane(this.groundPlane, hit);
-    return { x: hit.x, y: hit.z };
+    this.raycaster.ray.intersectPlane(this.groundPlane, this.groundHit);
+    return { x: this.groundHit.x, y: this.groundHit.z };
   }
 
   /** Sim world point → screen pixels (for HUD anchors). */
   project(x: number, y: number, height = 0): { x: number; y: number; visible: boolean } {
     this.projVec.set(x, height, y).project(this.camera);
     return {
-      x: (this.projVec.x * 0.5 + 0.5) * window.innerWidth,
-      y: (-this.projVec.y * 0.5 + 0.5) * window.innerHeight,
+      x: (this.projVec.x * 0.5 + 0.5) * this.vw,
+      y: (-this.projVec.y * 0.5 + 0.5) * this.vh,
       visible: this.projVec.z < 1,
     };
   }
 
-  private onResize = (): void => {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+  /** Re-cache size + resize camera/renderer from the viewport bus (one rAF-coalesced fire). */
+  private applyViewport = (): void => {
+    const { w, h } = viewportSize();
+    this.vw = w;
+    this.vh = h;
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(w, h, false);
   };
 
   dispose(): void {
-    window.removeEventListener('resize', this.onResize);
+    this.offViewport?.();
+    this.offViewport = null;
+    if (this.laser) {
+      this.laser.geometry.dispose();
+      (this.laser.material as LineBasicMaterial).dispose();
+    }
+    if (this.reticle) {
+      this.reticle.geometry.dispose();
+      (this.reticle.material as MeshBasicMaterial).dispose();
+    }
+    this.wallGeo?.dispose();
+    this.wallGeo = null;
     this.splat.dispose();
     this.babos.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss(); // release the GL context now, don't wait for GC
     this.canvas.remove();
   }
+}
+
+/**
+ * Merge wall boxes (already translated to world position) into ONE geometry with
+ * a 2-group layout: side faces → material 0 (wallMat), top/bottom caps → material 1
+ * (topMat). Returns null for an empty input.
+ *
+ * `mergeGeometries(boxes, true)` would collapse each box into a single group keyed
+ * by array index — wrong for our per-face split — so we flat-merge (no groups) and
+ * rebuild the groups by hand. BoxGeometry emits face-pairs in order
+ * [+X,-X,+Y,-Y,+Z,-Z], 6 indices each (36 per box): {+X,-X,+Z,-Z}=sides, {+Y,-Y}=caps.
+ */
+export function mergeWalls(boxes: BufferGeometry[]): BufferGeometry | null {
+  if (boxes.length === 0) return null;
+  const merged = mergeGeometries(boxes, false);
+  // The source boxes are baked into `merged`; free their GPU copies now.
+  for (const b of boxes) b.dispose();
+  if (!merged) return null;
+  merged.clearGroups();
+  const PER_FACE = 6; // indices per box face-pair
+  const PER_BOX = PER_FACE * 6; // 36 indices per box
+  for (let k = 0; k < boxes.length; k++) {
+    const base = k * PER_BOX;
+    // sides = face-pairs 0,1 (+X,-X) and 4,5 (+Z,-Z); caps = face-pairs 2,3 (+Y,-Y).
+    merged.addGroup(base + 0 * PER_FACE, PER_FACE * 2, 0); // +X,-X sides
+    merged.addGroup(base + 2 * PER_FACE, PER_FACE * 2, 1); // +Y,-Y caps
+    merged.addGroup(base + 4 * PER_FACE, PER_FACE * 2, 0); // +Z,-Z sides
+  }
+  return merged;
 }

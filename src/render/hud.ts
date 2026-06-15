@@ -1,4 +1,6 @@
 import { C } from '../data/constants';
+import { viewportSize, onViewportChange } from '../core/viewport';
+import { canvasBackingScale } from './quality';
 import { CLASSES } from '../data/classes';
 import { GUNS } from '../data/weapons';
 import { EQUIPMENT } from '../data/equipment';
@@ -11,10 +13,50 @@ interface DamageArc { angle: number; ttl: number }
 const TAU = Math.PI * 2;
 
 /**
+ * Pick the combat cluster anchor by input source (S1.8). Desktop anchors on the
+ * mouse crosshair; touch has no crosshair, so the cluster hugs the local babo via
+ * its screen projection. Pure so the branch is unit-testable headless.
+ */
+export function combatAnchor(
+  touchMode: boolean,
+  mouse: { x: number; y: number },
+  projectBabo: () => { x: number; y: number; visible: boolean },
+): { x: number; y: number } {
+  if (!touchMode) return { x: mouse.x, y: mouse.y };
+  const p = projectBabo();
+  return { x: p.x, y: p.y };
+}
+
+/**
+ * Device safe-area insets in CSS px, read from CSS vars set by the shell from
+ * `env(safe-area-inset-*)`. Falls back to 0 (the panel's own 16px base inset is
+ * always added on top). Defensive for headless/no-DOM environments.
+ */
+function readSafeInset(): { left: number; bottom: number } {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') {
+    return { left: 0, bottom: 0 };
+  }
+  const s = getComputedStyle(document.documentElement);
+  const px = (v: string): number => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return {
+    left: px(s.getPropertyValue('--bv3-safe-left')),
+    bottom: px(s.getPropertyValue('--bv3-safe-bottom')),
+  };
+}
+
+/**
  * Canvas-2D HUD overlay. Everything combat-critical hugs the crosshair —
  * ammo/heat arc, reload sweep, ability radial — so eyes stay on the Babo.
  */
 export class Hud {
+  /** Touch mode (S1.8): anchors the combat cluster on the babo + draws the safe-area panel. */
+  touchMode = false;
+  /** True while a gun-pickup prompt is live this frame — the App shows the touch PICKUP button. */
+  pickupPromptActive = false;
+
   private canvas: HTMLCanvasElement;
   private g: CanvasRenderingContext2D;
   private feed: FeedEntry[] = [];
@@ -22,6 +64,10 @@ export class Hud {
   private hitMarkerT = 0;
   private killMarkerT = 0;
   private leaderPulse = 0;
+  // CSS-px draw size. The canvas backing store is DPR-scaled; all draw code reads these.
+  private cssW = 0;
+  private cssH = 0;
+  private offViewport: (() => void) | null = null;
 
   constructor(
     container: HTMLElement,
@@ -35,13 +81,21 @@ export class Hud {
     container.appendChild(this.canvas);
     this.g = this.canvas.getContext('2d')!;
     this.resize();
-    window.addEventListener('resize', this.resize);
+    this.offViewport = onViewportChange(() => this.resize());
   }
 
-  private resize = (): void => {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
-  };
+  private resize(): void {
+    const { w, h } = viewportSize();
+    // 1x backing store on desktop (byte-identical to main); DPR-scaled on mobile.
+    const dpr = canvasBackingScale();
+    this.cssW = w;
+    this.cssH = h;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.canvas.style.width = `${w}px`;
+    this.canvas.style.height = `${h}px`;
+    this.g.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS px
+  }
 
   handleEvents(events: GameEvent[], localId: number, view: WorldView): void {
     const byId = new Map<number, PlayerState>();
@@ -85,8 +139,8 @@ export class Hud {
     showScores: boolean, dt: number,
   ): void {
     const g = this.g;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.cssW;
+    const H = this.cssH;
     g.clearRect(0, 0, W, H);
 
     let local: PlayerState | undefined;
@@ -101,11 +155,14 @@ export class Hud {
     this.killMarkerT = Math.max(0, this.killMarkerT - dt);
     this.leaderPulse += dt;
 
-    if (local.alive) this.drawCrosshair(g, local, mouse);
+    // Touch has no mouse crosshair — anchor the combat cluster on the babo itself.
+    const anchor = combatAnchor(this.touchMode, mouse, () => this.project(local!.x, local!.y, 0.6));
+    if (local.alive) this.drawCrosshair(g, local, anchor);
     this.drawDamageArcs(g, W, H, dt);
     this.drawFeed(g, W, dt);
     this.drawStatus(g, W, view, players, localId);
     this.drawPickupPrompt(g, view, local);
+    if (this.touchMode) this.drawTouchStatus(g, H, local);
     if (!local.alive) this.drawRespawn(g, W, H, local);
     if (view.mode.mode === 'bounty' && view.mode.leaderId === localId) this.drawMarked(g, W);
     if (showScores || view.mode.ended) this.drawScoreboard(g, W, H, view, players, localId);
@@ -335,6 +392,7 @@ export class Hud {
   }
 
   private drawPickupPrompt(g: CanvasRenderingContext2D, view: WorldView, local: PlayerState): void {
+    this.pickupPromptActive = false;
     if (!local.alive) return;
     for (const pk of view.pickups) {
       if (pk.kind !== 'gun' || !pk.gun) continue;
@@ -342,6 +400,7 @@ export class Hud {
       if (d > C.GUN_PICKUP_RADIUS) continue;
       const pos = this.project(pk.x, pk.y, 0.8);
       if (!pos.visible) continue;
+      this.pickupPromptActive = true;
       g.font = 'bold 12px monospace';
       g.textAlign = 'center';
       g.fillStyle = 'rgba(10,12,14,0.7)';
@@ -351,6 +410,53 @@ export class Hud {
       g.fillStyle = '#ffd060';
       g.fillText(label, pos.x, pos.y + 1);
       break;
+    }
+  }
+
+  /**
+   * Fixed bottom-left safe-area status readout for touch (S1.8). Mirrors the
+   * crosshair cluster numerically (ammo/heat, reload, ability, grenade) where the
+   * thumb-anchored cluster is hard to read mid-fight. Inset respects the device
+   * safe area via a CSS var (`--bv3-safe-bottom`), falling back to 16px.
+   */
+  private drawTouchStatus(g: CanvasRenderingContext2D, H: number, p: PlayerState): void {
+    const safe = readSafeInset();
+    const x = 16 + safe.left;
+    const baseY = H - 16 - safe.bottom;
+    const gun = GUNS[p.gun];
+    const cls = CLASSES[p.classId];
+    g.textAlign = 'left';
+    g.font = 'bold 13px monospace';
+
+    let line = baseY;
+    const put = (text: string, color: string): void => {
+      g.fillStyle = color;
+      g.fillText(text, x, line);
+      line -= 17;
+    };
+
+    // Grenade count + equipment
+    if (p.equip && p.equipCount > 0) {
+      const eq = EQUIPMENT[p.equip];
+      put(`${eq.name.toUpperCase()} x${p.equipCount}`, '#' + eq.color.toString(16).padStart(6, '0'));
+    }
+    put(`GREN ${p.grenades}`, '#9aa84a');
+
+    // Ability cooldown
+    const abilFrac = p.abilityCD <= 0 ? 1 : 1 - Math.min(1, p.abilityCD / cls.ability.cooldown);
+    put(p.abilityCD <= 0 ? 'SKILL READY' : `SKILL ${Math.round(abilFrac * 100)}%`,
+      p.abilityCD <= 0 ? '#8cffaa' : 'rgba(200,210,225,0.75)');
+
+    // Ammo (reload) or heat
+    if (gun.sustain === 'reload') {
+      if (p.reloadT > 0) {
+        put('RELOADING', '#ffd060');
+      } else {
+        put(`AMMO ${p.mag}/${gun.magSize}`, p.mag / gun.magSize! < 0.25 ? '#ff7040' : '#8cdcff');
+      }
+    } else {
+      put(p.overheatT > 0 ? 'OVERHEAT' : `HEAT ${Math.round(p.heat * 100)}%`,
+        p.overheatT > 0 ? '#ff5040' : p.heat > 0.75 ? '#ff7040' : '#57c8e8');
     }
   }
 
@@ -428,7 +534,8 @@ export class Hud {
   }
 
   dispose(): void {
-    window.removeEventListener('resize', this.resize);
+    this.offViewport?.();
+    this.offViewport = null;
     this.canvas.remove();
   }
 }

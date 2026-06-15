@@ -1,7 +1,7 @@
 import { ALL_CLASS_IDS, CLASSES, type ClassId } from '../data/classes';
 import { ALL_GUN_IDS, GUNS, type GunId } from '../data/weapons';
 import type { ModeId, PlayerState } from '../sim/types';
-import { makeGunIcon } from '../render/gunModels';
+import { makeGunIcon } from '../render/gunIcons';
 
 /** One-line "how this chassis plays" blurb for the showcase panel. */
 const CLASS_TIPS: Record<ClassId, string> = {
@@ -167,9 +167,10 @@ export class UI {
       const c = CLASSES[id];
       const col = '#' + c.color.toString(16).padStart(6, '0');
       return `
-        <div class="class-card ${id === selectedClass ? 'sel' : ''}" data-class="${id}" title="${c.role}">
+        <div class="class-card ${id === selectedClass ? 'sel' : ''}" data-class="${id}" title="${esc(c.role)}">
           <div class="ball" style="background: radial-gradient(circle at 35% 30%, ${col}, #16181d 90%)"></div>
           <div class="cname">${c.name}</div>
+          <div class="tooltip-inline">${esc(c.role)}</div>
         </div>`;
     }).join('');
 
@@ -193,8 +194,9 @@ export class UI {
     const gunChips = ALL_GUN_IDS.map((id) => {
       const g = GUNS[id];
       return `
-        <div class="gun-chip ${id === selectedGun ? 'sel' : ''}" data-gun="${id}" title="${g.identity}">
+        <div class="gun-chip ${id === selectedGun ? 'sel' : ''}" data-gun="${id}" title="${esc(g.identity)}">
           <span class="gun-ico-wrap"></span><span class="gun-name">${g.name}</span>
+          <span class="tooltip-inline">${esc(g.identity)}</span>
         </div>`;
     }).join('');
     const gunMeta = gun.sustain === 'reload'

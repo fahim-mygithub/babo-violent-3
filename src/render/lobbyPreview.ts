@@ -1,10 +1,11 @@
-import * as THREE from 'three';
+import { BackSide, CircleGeometry, ConeGeometry, CylinderGeometry, DirectionalLight, DoubleSide, Group, HemisphereLight, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, PerspectiveCamera, RingGeometry, Scene, ShaderMaterial, SphereGeometry, TorusGeometry, Vector3, WebGLRenderer } from 'three';
 import { C } from '../data/constants';
 import { CLASSES, type ClassId } from '../data/classes';
 import { type GunId } from '../data/weapons';
 import { makeBaboMaterial, type BaboUniforms } from './baboShader';
 import { buildGunModel, disposeGunModel } from './gunModels';
 import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboShapes';
+import { previewQuality } from './quality';
 
 /**
  * Self-contained animated hero shot of the selected Babo for the lobby. Owns a
@@ -21,24 +22,24 @@ const CYCLE = IDLE_DUR + DEMO_DUR;
 
 interface Demo {
   label: string;
-  meshes: THREE.Object3D[];
+  meshes: Object3D[];
   /** k in [0,1] over the demo window; also receives absolute time. */
   update: (k: number, t: number) => void;
 }
 
 export class LobbyPreview {
-  private renderer: THREE.WebGLRenderer;
-  private scene = new THREE.Scene();
-  private camera: THREE.PerspectiveCamera;
+  private renderer: WebGLRenderer;
+  private scene = new Scene();
+  private camera: PerspectiveCamera;
 
-  private baboRoot = new THREE.Group();   // bobs / dashes
-  private body: THREE.Mesh;
-  private mat: THREE.ShaderMaterial;
-  private mount = new THREE.Group();       // upright; holds gun + sweeps aim
-  private gun: THREE.Group | null = null;
+  private baboRoot = new Group();   // bobs / dashes
+  private body: Mesh;
+  private mat: ShaderMaterial;
+  private mount = new Group();       // upright; holds gun + sweeps aim
+  private gun: Group | null = null;
   private visual: ClassVisual | null = null;
-  private uprightHolder: THREE.Group | null = null;  // bodyScale wrapper for upright bits
-  private contact: THREE.Mesh;
+  private uprightHolder: Group | null = null;  // bodyScale wrapper for upright bits
+  private contact: Mesh;
 
   private classId: ClassId = 'spider';
   private gunId: GunId = 'stinger';
@@ -48,57 +49,62 @@ export class LobbyPreview {
   private running = false;
   private time = 0;
   private last = 0;
+  private acc = 0;          // frame-cap accumulator (mid throttle)
+  private minFrame = 0;     // min seconds between rendered frames (0 = uncapped)
   private ro: ResizeObserver | null = null;
 
   /** Fired with the ability name while a demo plays, null when idle. */
   onCaption: ((text: string | null) => void) | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Tier throttle (S3.8): high = AA on / DPR≤2 / uncapped; mid = AA off / DPR≤1 / 30fps.
+    const q = previewQuality();
+    this.minFrame = q.maxFps > 0 ? 1 / q.maxFps : 0;
+    this.renderer = new WebGLRenderer({ canvas, antialias: q.antialias, alpha: true, powerPreference: 'low-power' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q.maxDpr));
     this.renderer.setClearColor(0x000000, 0);
 
-    this.camera = new THREE.PerspectiveCamera(34, 1, 0.1, 50);
+    this.camera = new PerspectiveCamera(34, 1, 0.1, 50);
     this.camera.position.set(1.7, 1.55, 3.4);
     this.camera.lookAt(0, R + 0.05, 0);
 
-    this.scene.add(new THREE.HemisphereLight(0xcdd6e8, 0x2a2622, 1.4));
-    const key = new THREE.DirectionalLight(0xfff2e0, 2.2);
+    this.scene.add(new HemisphereLight(0xcdd6e8, 0x2a2622, 1.4));
+    const key = new DirectionalLight(0xfff2e0, 2.2);
     key.position.set(4, 7, 5);
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0x88a0e0, 0.9);
+    const fill = new DirectionalLight(0x88a0e0, 0.9);
     fill.position.set(-5, 3, -3);
     this.scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xff6a6a, 0.5);
+    const rim = new DirectionalLight(0xff6a6a, 0.5);
     rim.position.set(-2, 2, -6);
     this.scene.add(rim);
 
     // Pedestal stage
-    const disc = new THREE.Mesh(
-      new THREE.CylinderGeometry(1.5, 1.62, 0.12, 48),
-      new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.85, metalness: 0.2 }),
+    const disc = new Mesh(
+      new CylinderGeometry(1.5, 1.62, 0.12, 48),
+      new MeshStandardMaterial({ color: 0x14161c, roughness: 0.85, metalness: 0.2 }),
     );
     disc.position.y = -0.06;
     this.scene.add(disc);
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(1.28, 1.42, 56),
-      new THREE.MeshBasicMaterial({ color: 0x2a2e38, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+    const ring = new Mesh(
+      new RingGeometry(1.28, 1.42, 56),
+      new MeshBasicMaterial({ color: 0x2a2e38, transparent: true, opacity: 0.8, side: DoubleSide }),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.012;
     this.scene.add(ring);
-    this.accentRing = new THREE.Mesh(
-      new THREE.RingGeometry(1.46, 1.52, 56),
-      new THREE.MeshBasicMaterial({ color: 0x46d05a, transparent: true, opacity: 0.55, side: THREE.DoubleSide }),
+    this.accentRing = new Mesh(
+      new RingGeometry(1.46, 1.52, 56),
+      new MeshBasicMaterial({ color: 0x46d05a, transparent: true, opacity: 0.55, side: DoubleSide }),
     );
     this.accentRing.rotation.x = -Math.PI / 2;
     this.accentRing.position.y = 0.014;
     this.scene.add(this.accentRing);
 
     // Contact shadow
-    this.contact = new THREE.Mesh(
-      new THREE.CircleGeometry(R * 1.25, 24),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 }),
+    this.contact = new Mesh(
+      new CircleGeometry(R * 1.25, 24),
+      new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 }),
     );
     this.contact.rotation.x = -Math.PI / 2;
     this.contact.position.y = 0.02;
@@ -106,7 +112,7 @@ export class LobbyPreview {
 
     // Babo body
     this.mat = makeBaboMaterial(CLASSES[this.classId].color, R, R);
-    this.body = new THREE.Mesh(new THREE.SphereGeometry(R, 32, 22), this.mat);
+    this.body = new Mesh(new SphereGeometry(R, 32, 22), this.mat);
     this.baboRoot.add(this.body);
     this.baboRoot.add(this.mount);
     this.baboRoot.position.y = R;
@@ -122,7 +128,7 @@ export class LobbyPreview {
     this.ro.observe(canvas);
   }
 
-  private accentRing: THREE.Mesh;
+  private accentRing: Mesh;
 
   // ---------------------------------------------------------------------------
 
@@ -130,7 +136,7 @@ export class LobbyPreview {
     if (classId !== this.classId) {
       this.classId = classId;
       this.mat.uniforms.uColor.value.set(CLASSES[classId].color);
-      const accent = this.accentRing.material as THREE.MeshBasicMaterial;
+      const accent = this.accentRing.material as MeshBasicMaterial;
       accent.color.setHex(CLASSES[classId].color);
       this.rebuildVisual();
       this.rebuildDemo();
@@ -155,7 +161,7 @@ export class LobbyPreview {
     this.mat.uniforms.uRadius.value = R * v.bodyScale;
     for (const o of v.roll) this.body.add(o);
     // Upright bits ride a bodyScale wrapper so they track the scaled shell.
-    const holder = new THREE.Group();
+    const holder = new Group();
     holder.scale.setScalar(v.bodyScale);
     for (const o of v.upright) holder.add(o);
     this.baboRoot.add(holder);
@@ -194,18 +200,18 @@ export class LobbyPreview {
     const u = this.mat.uniforms as unknown as BaboUniforms;
     switch (classId) {
       case 'spider': {
-        const anchor = new THREE.Vector3(1.5, 1.5, -0.7);
-        const rope = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.025, 0.025, 1, 6),
-          new THREE.MeshBasicMaterial({ color: 0xdfe7ef }),
+        const anchor = new Vector3(1.5, 1.5, -0.7);
+        const rope = new Mesh(
+          new CylinderGeometry(0.025, 0.025, 1, 6),
+          new MeshBasicMaterial({ color: 0xdfe7ef }),
         );
-        const claw = new THREE.Mesh(
-          new THREE.ConeGeometry(0.09, 0.2, 5),
-          new THREE.MeshStandardMaterial({ color: 0xbfe9c8, metalness: 0.5, roughness: 0.4 }),
+        const claw = new Mesh(
+          new ConeGeometry(0.09, 0.2, 5),
+          new MeshStandardMaterial({ color: 0xbfe9c8, metalness: 0.5, roughness: 0.4 }),
         );
         rope.visible = false; claw.visible = false;
         this.scene.add(rope, claw);
-        const origin = new THREE.Vector3();
+        const origin = new Vector3();
         return {
           label: 'Grappling Hook', meshes: [rope, claw],
           update: (k) => {
@@ -218,7 +224,7 @@ export class LobbyPreview {
             const dir = tip.clone().sub(origin);
             const len = Math.max(0.001, dir.length());
             rope.scale.set(1, len, 1);
-            rope.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+            rope.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), dir.clone().normalize());
             claw.position.copy(tip);
             claw.quaternion.copy(rope.quaternion);
             // a little swing pull toward the anchor at full extension
@@ -229,13 +235,13 @@ export class LobbyPreview {
         };
       }
       case 'juggernaut': {
-        const streakMat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0 });
-        const streak = new THREE.Mesh(new THREE.SphereGeometry(R * 1.1, 16, 12), streakMat);
+        const streakMat = new MeshBasicMaterial({ color: col, transparent: true, opacity: 0 });
+        const streak = new Mesh(new SphereGeometry(R * 1.1, 16, 12), streakMat);
         streak.scale.set(2.4, 1, 1);
-        const sparks: THREE.Mesh[] = [];
-        const sparkGeo = new THREE.ConeGeometry(0.08, 0.3, 5);
-        const sparkMat = new THREE.MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0 });
-        for (let i = 0; i < 6; i++) sparks.push(new THREE.Mesh(sparkGeo, sparkMat));
+        const sparks: Mesh[] = [];
+        const sparkGeo = new ConeGeometry(0.08, 0.3, 5);
+        const sparkMat = new MeshBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0 });
+        for (let i = 0; i < 6; i++) sparks.push(new Mesh(sparkGeo, sparkMat));
         this.scene.add(streak, ...sparks);
         return {
           label: 'Pinball Dash', meshes: [streak, ...sparks],
@@ -258,13 +264,13 @@ export class LobbyPreview {
         };
       }
       case 'bastion': {
-        const shield = new THREE.Mesh(
-          new THREE.TorusGeometry(R * 1.5, 0.05, 10, 40),
-          new THREE.MeshBasicMaterial({ color: 0x9ec2ff, transparent: true, opacity: 0 }),
+        const shield = new Mesh(
+          new TorusGeometry(R * 1.5, 0.05, 10, 40),
+          new MeshBasicMaterial({ color: 0x9ec2ff, transparent: true, opacity: 0 }),
         );
-        const dome = new THREE.Mesh(
-          new THREE.SphereGeometry(R * 1.7, 24, 16),
-          new THREE.MeshBasicMaterial({ color: 0x6aa8ff, transparent: true, opacity: 0, side: THREE.BackSide }),
+        const dome = new Mesh(
+          new SphereGeometry(R * 1.7, 24, 16),
+          new MeshBasicMaterial({ color: 0x6aa8ff, transparent: true, opacity: 0, side: BackSide }),
         );
         this.baboRoot.add(shield, dome);
         return {
@@ -274,16 +280,16 @@ export class LobbyPreview {
             u.uFortify.value = p;
             shield.rotation.x = Math.PI / 2;
             shield.rotation.z = this.time * 1.5;
-            (shield.material as THREE.MeshBasicMaterial).opacity = 0.85 * p;
+            (shield.material as MeshBasicMaterial).opacity = 0.85 * p;
             shield.scale.setScalar(1 + 0.06 * Math.sin(this.time * 8));
-            (dome.material as THREE.MeshBasicMaterial).opacity = 0.18 * p;
+            (dome.material as MeshBasicMaterial).opacity = 0.18 * p;
           },
         };
       }
       case 'phantom': {
-        const ghost = new THREE.Mesh(
-          new THREE.SphereGeometry(R, 24, 16),
-          new THREE.MeshBasicMaterial({ color: 0xb39ddb, transparent: true, opacity: 0 }),
+        const ghost = new Mesh(
+          new SphereGeometry(R, 24, 16),
+          new MeshBasicMaterial({ color: 0xb39ddb, transparent: true, opacity: 0 }),
         );
         this.baboRoot.add(ghost);
         return {
@@ -291,30 +297,33 @@ export class LobbyPreview {
           update: (k) => {
             const p = Math.sin(k * Math.PI);
             u.uOpacity.value = 1 - 0.8 * p;
+            // The body shader is opaque by default (S3.4); engage blending while the
+            // phantom demo fades it, mirroring the in-match phase guard.
+            this.mat.transparent = p > 0;
             this.setGunOpacity(1 - 0.8 * p); // fade the held gun with the body
-            const gm = ghost.material as THREE.MeshBasicMaterial;
+            const gm = ghost.material as MeshBasicMaterial;
             gm.opacity = 0.3 * p;
             ghost.scale.setScalar(1 + 0.5 * p);
           },
         };
       }
       case 'trapper': {
-        const well = new THREE.Mesh(
-          new THREE.RingGeometry(0.1, 1.0, 40),
-          new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0, side: THREE.DoubleSide }),
+        const well = new Mesh(
+          new RingGeometry(0.1, 1.0, 40),
+          new MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0, side: DoubleSide }),
         );
         well.rotation.x = -Math.PI / 2;
         well.position.y = 0.03;
-        const motes: THREE.Mesh[] = [];
-        const moteGeo = new THREE.SphereGeometry(0.06, 8, 6);
-        const moteMat = new THREE.MeshBasicMaterial({ color: 0xffe79a, transparent: true, opacity: 0 });
-        for (let i = 0; i < 8; i++) motes.push(new THREE.Mesh(moteGeo, moteMat));
+        const motes: Mesh[] = [];
+        const moteGeo = new SphereGeometry(0.06, 8, 6);
+        const moteMat = new MeshBasicMaterial({ color: 0xffe79a, transparent: true, opacity: 0 });
+        for (let i = 0; i < 8; i++) motes.push(new Mesh(moteGeo, moteMat));
         this.scene.add(well, ...motes);
         return {
           label: 'Gravity Well', meshes: [well, ...motes],
           update: (k) => {
             const p = Math.sin(k * Math.PI);
-            (well.material as THREE.MeshBasicMaterial).opacity = 0.7 * p;
+            (well.material as MeshBasicMaterial).opacity = 0.7 * p;
             well.scale.setScalar(0.7 + 0.5 * Math.sin(this.time * 4));
             moteMat.opacity = p;
             motes.forEach((m, i) => {
@@ -333,6 +342,7 @@ export class LobbyPreview {
     const u = this.mat.uniforms as unknown as BaboUniforms;
     u.uFortify.value = 0;
     u.uOpacity.value = 1;
+    this.mat.transparent = false; // back to the opaque default once the phase demo ends
     this.setGunOpacity(1);
     if (this.demo) for (const m of this.demo.meshes) m.visible = false;
   }
@@ -341,7 +351,7 @@ export class LobbyPreview {
   private setGunOpacity(opacity: number): void {
     if (!this.gun) return;
     this.gun.traverse((o) => {
-      const m = (o as THREE.Mesh).material;
+      const m = (o as Mesh).material;
       const mats = Array.isArray(m) ? m : m ? [m] : [];
       for (const mm of mats) { mm.transparent = opacity < 1; mm.opacity = opacity; }
     });
@@ -361,7 +371,16 @@ export class LobbyPreview {
       this.raf = requestAnimationFrame(tick);
       const dt = Math.min(0.05, (now - this.last) / 1000);
       this.last = now;
-      if (!document.hidden) this.frame(dt);
+      if (document.hidden) return;
+      // Frame cap (mid throttle): accumulate dt and only render once minFrame elapses.
+      if (this.minFrame > 0) {
+        this.acc += dt;
+        if (this.acc < this.minFrame) return;
+        this.frame(this.acc);
+        this.acc = 0;
+      } else {
+        this.frame(dt);
+      }
     };
     this.raf = requestAnimationFrame(tick);
   }
@@ -421,31 +440,64 @@ export class LobbyPreview {
     this.stop();
     this.ro?.disconnect();
     this.ro = null;
-    if (this.demo) for (const m of this.demo.meshes) disposeObj(m);
-    if (this.visual) disposeClassVisual(this.visual);
-    if (this.gun) disposeGunModel(this.gun);
-    this.scene.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mat = (m as THREE.Mesh).material;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-      else if (mat) (mat as THREE.Material).dispose();
+    disposeLobbyScene(this.scene, {
+      gun: this.gun, mount: this.mount, visual: this.visual, body: this.body,
+      uprightHolder: this.uprightHolder, baboRoot: this.baboRoot, demo: this.demo,
     });
     this.renderer.dispose();
     this.renderer.forceContextLoss(); // release the GL context now, don't wait for GC
   }
 }
 
+/** The scene-graph half of LobbyPreview.dispose, split out so it's testable
+ *  without a live WebGLRenderer (the field names match LobbyPreview's privates). */
+interface DisposableLobbyScene {
+  gun: Group | null;
+  mount: Group;
+  visual: ClassVisual | null;
+  body: Mesh;
+  uprightHolder: Group | null;
+  baboRoot: Group;
+  demo?: { meshes: Object3D[] } | null;
+}
+
+/**
+ * Free a lobby-preview scene's resources WITHOUT double-freeing cache-owned
+ * templates. The guarded disposeClassVisual/disposeGunModel skip anything the
+ * low/mid template caches own — but a blanket scene.traverse would then re-dispose
+ * those same shared geometries/materials (they're still parented in the scene).
+ * So detach the gun + class roll/upright objects from the graph FIRST, then let
+ * the traverse free only the remaining lobby-owned resources (lights, disc, ring,
+ * contact shadow, accent ring, body geo + shader material).
+ */
+export function disposeLobbyScene(scene: Scene, p: DisposableLobbyScene): void {
+  if (p.demo) for (const m of p.demo.meshes) disposeObj(m);
+  // Guarded disposers: free per-instance geo/mat, SKIP cache-owned templates.
+  if (p.visual) disposeClassVisual(p.visual);
+  if (p.gun) disposeGunModel(p.gun);
+  // Detach the cache-affected objects so the blanket traverse can't reach them.
+  if (p.gun) p.mount.remove(p.gun);
+  if (p.visual) for (const o of p.visual.roll) p.body.remove(o);
+  if (p.uprightHolder) p.baboRoot.remove(p.uprightHolder);
+  scene.traverse((o) => {
+    const m = o as Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = (m as Mesh).material;
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+    else if (mat) (mat as Material).dispose();
+  });
+}
+
 function ease(x: number): number {
   return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 }
 
-function disposeObj(o: THREE.Object3D): void {
+function disposeObj(o: Object3D): void {
   o.traverse((c) => {
-    const m = c as THREE.Mesh;
+    const m = c as Mesh;
     if (m.geometry) m.geometry.dispose();
     const mat = m.material;
     if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-    else if (mat) (mat as THREE.Material).dispose();
+    else if (mat) (mat as Material).dispose();
   });
 }

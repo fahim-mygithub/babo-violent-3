@@ -4,8 +4,9 @@
  * alpha = fraction of a tick elapsed.
  *
  * Hidden-tab resilience: rAF stops firing in background tabs, which would
- * freeze the sim — fatal when this browser is the multiplayer HOST. A
- * setInterval fallback keeps ticking (render skipped) while hidden.
+ * freeze the sim — fatal for any role that owns the authoritative sim (the
+ * multiplayer HOST and LOCAL singleplayer). A setInterval fallback keeps ticking
+ * (render skipped) while hidden. Only a true CLIENT pauses-and-resyncs.
  */
 export class FixedLoop {
   readonly dt: number;
@@ -20,6 +21,10 @@ export class FixedLoop {
     private readonly tick: () => void,
     private readonly render: (alpha: number, frameDt: number) => void,
     private readonly maxCatchUp = 5,
+    // The authoritative roles (HOST + LOCAL singleplayer) keep ticking while
+    // hidden; only a true CLIENT pauses-and-resyncs on hidden, so it skips the
+    // keep-alive. The App passes role !== 'client'.
+    private readonly keepAliveWhenHidden = false,
   ) {
     this.dt = 1 / tickHz;
   }
@@ -52,10 +57,13 @@ export class FixedLoop {
       this.raf = requestAnimationFrame(frame);
     };
     this.raf = requestAnimationFrame(frame);
-    // Background fallback: keep the sim alive while the tab is hidden.
-    this.interval = window.setInterval(() => {
-      if (this.running && document.hidden) this.advance(false);
-    }, 50);
+    // Background fallback: keep the sim alive while the tab is hidden. Installed
+    // for the authoritative roles (host + local); a true client never installs it.
+    if (this.keepAliveWhenHidden) {
+      this.interval = window.setInterval(() => {
+        if (this.running && document.hidden) this.advance(false);
+      }, 50);
+    }
   }
 
   stop(): void {

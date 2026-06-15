@@ -63,7 +63,37 @@ export const C = {
   WALL_HEIGHT: 1.6,         // visual wall height (grenades arc over)
   MOVE_FORCE_SCALE: 1.0,
   PROJECTILE_MAX_DIST: 40,
+  /** Knockback impulse on a babo struck by the lance rail (hitscan + projectile). */
+  LANCE_KNOCK: 10,
 
   // Bots
   BOT_NAMES: ['Crusher', 'Gibs', 'Rolo', 'Hemo', 'Splat', 'Maul', 'Vex', 'Plasma', 'Tank', 'Drip'],
+
+  // --- Sim flag scaffolding (inert; consumed by later phases) -------------
+  /** Per-babo continuous collision detection (sim.ts:139). false → drop CCD (S5.2a, D-SHIFT). */
+  PLAYER_CCD: false, // babo per-tick displacement ≪ radius at 60Hz; CCD off saves mobile CPU
+  /** Provenance/version marker for the D-SHIFT sim bundle (distSq swaps + CCD).
+   *  Documentation only — it is NOT folded into simHash and gates nothing, so it
+   *  does NOT re-baseline the golden (the hash tracks actual sim state). Bump it
+   *  alongside a deliberate re-baseline as a human-readable record, not a trigger. */
+  SIM_BASELINE_V: 2,
+  /** Per-tick projectile cap; grief/lag-spam guard, drops oldest BULLET only (S2.7). */
+  MAX_PROJECTILES: 256,
+  /** Global concurrent WebAudio voice ceiling (S5.7c). */
+  AUDIO_MAX_VOICES: 24,
+  /** Per-gun min inter-shot interval (ms): drop a non-local 'shot' voice if the same gun fired more recently (S5.7c). */
+  AUDIO_GUN_MIN_INTERVAL_MS: 25,
+} as const;
+
+/**
+ * Sim feature flags. Imported by the sim AND tests (stays headless/deterministic
+ * — NOT window.__bv3). MUST be identical on host + all clients (build/match
+ * constant). Flag-ON and flag-OFF are DIFFERENT RNG streams once S2 routes the
+ * Lance through fireProjectiles (S2.8), so each gets its own golden baseline.
+ */
+export const FLAGS = {
+  /** false → exact legacy hitscan fireLance + old 'rail' event (desktop default). */
+  PROJECTILE_LANCE: false,
+  /** Per-tick projectile cap (mirrors C.MAX_PROJECTILES); applies to all guns (S2.7). */
+  MAX_PROJECTILES: C.MAX_PROJECTILES,
 } as const;

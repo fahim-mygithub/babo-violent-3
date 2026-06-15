@@ -1,4 +1,6 @@
 import { C } from '../data/constants';
+import { viewportSize, onViewportChange } from '../core/viewport';
+import { canvasBackingScale } from './quality';
 import type { GameEvent, PlayerState } from '../sim/types';
 import type { WorldView } from './renderer';
 
@@ -14,6 +16,18 @@ export class ScreenFx {
   private splatters: Splatter[] = [];
   private hurtFlash = 0;
   private heartbeat = 0;
+  // CSS-px draw size. The canvas backing store is DPR-scaled; all draw code reads these.
+  private cssW = 0;
+  private cssH = 0;
+  private offViewport: (() => void) | null = null;
+  // Low-HP vignette gradient, cached and rebuilt only when the canvas size changes.
+  // Built at unit (0→1) alpha; the per-frame `intensity` is applied via globalAlpha,
+  // which is pixel-identical to baking `intensity` into the outer alpha stop.
+  private gradCache: CanvasGradient | null = null;
+  private gradKey = '';
+  // True while the canvas holds drawn content. Lets the idle early-out clear the
+  // screen exactly once on the transition to idle, instead of every idle frame.
+  private dirtyLastFrame = false;
 
   constructor(container: HTMLElement) {
     this.canvas = document.createElement('canvas');
@@ -24,13 +38,22 @@ export class ScreenFx {
     container.appendChild(this.canvas);
     this.g = this.canvas.getContext('2d')!;
     this.resize();
-    window.addEventListener('resize', this.resize);
+    this.offViewport = onViewportChange(() => this.resize());
   }
 
-  private resize = (): void => {
-    this.canvas.width = window.innerWidth;
-    this.canvas.height = window.innerHeight;
-  };
+  private resize(): void {
+    const { w, h } = viewportSize();
+    // 1x backing store on desktop (byte-identical to main); DPR-scaled on mobile.
+    const dpr = canvasBackingScale();
+    this.cssW = w;
+    this.cssH = h;
+    this.canvas.width = Math.round(w * dpr);
+    this.canvas.height = Math.round(h * dpr);
+    this.canvas.style.width = `${w}px`;
+    this.canvas.style.height = `${h}px`;
+    this.g.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS px
+    this.gradCache = null; // size changed → rebuild the vignette gradient on next use
+  }
 
   handleEvents(events: GameEvent[], localId: number, view: WorldView): void {
     let local: PlayerState | undefined;
@@ -46,8 +69,8 @@ export class ScreenFx {
   }
 
   private addSplatter(intensity: number, own: boolean): void {
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const W = this.cssW;
+    const H = this.cssH;
     const count = Math.round(2 + intensity * 3) + (own ? 3 : 0);
     for (let i = 0; i < count; i++) {
       if (this.splatters.length >= 14) this.splatters.shift();
@@ -63,13 +86,25 @@ export class ScreenFx {
   }
 
   update(local: PlayerState | undefined, dt: number): void {
-    const g = this.g;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
-    g.clearRect(0, 0, W, H);
-
+    // Unconditional per-frame state (must advance even when we early-out, so the
+    // heartbeat phase and hurt-flash decay stay continuous).
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.6);
     this.heartbeat += dt;
+
+    const g = this.g;
+    const W = this.cssW;
+    const H = this.cssH;
+
+    // Idle early-out: nothing to draw (no splatters, no hurt flash, HP not low).
+    // Clear once on the transition to idle so a stale last frame can't linger, then
+    // skip the whole clear+draw path while idle.
+    const lowHp = !!local && local.alive && local.hp / C.MAX_HP < 0.45;
+    if (this.splatters.length === 0 && this.hurtFlash <= 0 && !lowHp) {
+      if (this.dirtyLastFrame) { g.clearRect(0, 0, W, H); this.dirtyLastFrame = false; }
+      return;
+    }
+    this.dirtyLastFrame = true;
+    g.clearRect(0, 0, W, H);
 
     // Screen splatter blobs
     let w = 0;
@@ -105,17 +140,38 @@ export class ScreenFx {
         const danger = 1 - hpFrac / 0.45;
         const beat = Math.pow(Math.max(0, Math.sin(this.heartbeat * (4 + danger * 4))), 6);
         const intensity = danger * (0.45 + beat * 0.25);
-        const grad = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.72);
-        grad.addColorStop(0, 'rgba(120,0,4,0)');
-        grad.addColorStop(1, `rgba(120,0,4,${intensity})`);
-        g.fillStyle = grad;
+        // The cached gradient runs 0→1 alpha; applying the per-frame `intensity`
+        // via globalAlpha yields exactly rgba(120,0,4, stop*intensity) — pixel-
+        // identical to baking `intensity` into the outer alpha stop, but the
+        // gradient only rebuilds on resize (size-keyed cache).
+        const prevAlpha = g.globalAlpha;
+        g.globalAlpha = prevAlpha * intensity;
+        g.fillStyle = this.vignetteGradient(W, H);
         g.fillRect(0, 0, W, H);
+        g.globalAlpha = prevAlpha;
       }
     }
   }
 
+  /**
+   * Low-HP vignette gradient at unit (0→1) alpha, cached per canvas size. The
+   * caller applies the per-frame intensity via globalAlpha, so this only rebuilds
+   * when the canvas is resized — not every frame.
+   */
+  private vignetteGradient(W: number, H: number): CanvasGradient {
+    const key = `${W}x${H}`;
+    if (this.gradCache && this.gradKey === key) return this.gradCache;
+    const grad = this.g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.72);
+    grad.addColorStop(0, 'rgba(120,0,4,0)');
+    grad.addColorStop(1, 'rgba(120,0,4,1)');
+    this.gradCache = grad;
+    this.gradKey = key;
+    return grad;
+  }
+
   dispose(): void {
-    window.removeEventListener('resize', this.resize);
+    this.offViewport?.();
+    this.offViewport = null;
     this.canvas.remove();
   }
 }

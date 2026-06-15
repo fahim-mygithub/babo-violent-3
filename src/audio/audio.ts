@@ -9,6 +9,8 @@ import type { WorldView } from '../render/renderer';
  */
 export class AudioEngine {
   enabled = true;
+  /** Set once the first user gesture has unlocked WebAudio (so repeat gestures no-op). */
+  unlocked = false;
 
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -16,11 +18,23 @@ export class AudioEngine {
   private voicesThisBatch = 0;
   private heartPhase = 0;
   private sizzleAt = 0;
+  /** Global concurrent voice count; inc on source start, dec on its onended. */
+  private activeVoices = 0;
+  /** Last time (performance.now() ms) each gun produced a 'shot' voice. */
+  private lastGunAt: Partial<Record<GunId, number>> = {};
 
-  /** Call from a user gesture to unlock the AudioContext. */
-  resume(): void {
+  /**
+   * Call from the FIRST user gesture to unlock WebAudio (iOS Safari requires a
+   * silent buffer played inside the gesture). Idempotent via `unlocked` so a tap
+   * firing both pointerdown+touchend doesn't double-kick the context.
+   */
+  unlock(): void {
+    if (this.unlocked) return;
     if (!this.ctx) {
-      this.ctx = new AudioContext();
+      // iOS Safari (and older WebKit) only expose webkitAudioContext.
+      const Ctx = (typeof window !== 'undefined' && (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)) as typeof AudioContext | undefined;
+      if (!Ctx) return; // no WebAudio (jsdom without a stub) — stay silent, never throw
+      this.ctx = new Ctx();
       const comp = this.ctx.createDynamicsCompressor();
       comp.threshold.value = -18;
       comp.ratio.value = 6;
@@ -34,12 +48,43 @@ export class AudioEngine {
       const data = this.noiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    // A silent 1-sample buffer played inside the gesture is what actually unlocks
+    // iOS WebAudio — resume() alone is not enough on Safari.
+    const s = this.ctx.createBufferSource();
+    s.buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+    s.connect(this.ctx.destination);
+    s.start(0);
+    s.stop(this.ctx.currentTime + 0.001);
+    // 'interrupted' (iOS phone call / Siri) and 'suspended' both need a resume.
+    if (this.ctx.state !== 'running') void this.ctx.resume();
+    this.unlocked = true;
+  }
+
+  /** Re-arm audio after the tab returns to the foreground (visibilitychange). */
+  resumeIfUnlocked(): void {
+    if (this.unlocked && this.ctx && this.ctx.state !== 'running') void this.ctx.resume();
+  }
+
+  /** Suspend ONLY the AudioContext when the tab is hidden (the sim loop keeps ticking). */
+  suspend(): void {
+    if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend();
   }
 
   // -------------------------------------------------------------------------
   // Voices
   // -------------------------------------------------------------------------
+
+  /** Global voice budget: false once the concurrent ceiling is reached. */
+  private canVoice(): boolean { return this.activeVoices < C.AUDIO_MAX_VOICES; }
+
+  /** True if `gun` produced a 'shot' voice within the per-gun min interval. */
+  private gunThrottled(gun: GunId, now: number): boolean {
+    const t = this.lastGunAt[gun];
+    return t !== undefined && now - t < C.AUDIO_GUN_MIN_INTERVAL_MS;
+  }
+
+  /** Record the time `gun` last produced a 'shot' voice. */
+  private noteGun(gun: GunId, now: number): void { this.lastGunAt[gun] = now; }
 
   /** Filtered noise burst with a gain envelope and optional filter sweep. */
   private noise(opts: {
@@ -49,10 +94,13 @@ export class AudioEngine {
   }): void {
     const ctx = this.ctx;
     if (!ctx || !this.master || !this.noiseBuf) return;
+    if (!this.canVoice()) return; // global voice budget exhausted
     const t0 = ctx.currentTime + (opts.delay ?? 0);
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.loop = true;
+    this.activeVoices++;
+    src.onended = () => { this.activeVoices--; };
     const filt = ctx.createBiquadFilter();
     filt.type = opts.type ?? 'lowpass';
     filt.frequency.setValueAtTime(opts.f0 ?? 1000, t0);
@@ -75,9 +123,12 @@ export class AudioEngine {
   }): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
+    if (!this.canVoice()) return; // global voice budget exhausted
     const t0 = ctx.currentTime + (opts.delay ?? 0);
     const osc = ctx.createOscillator();
     osc.type = opts.type;
+    this.activeVoices++;
+    osc.onended = () => { this.activeVoices--; };
     osc.frequency.setValueAtTime(Math.max(20, opts.f0), t0);
     if (opts.f1 !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(20, opts.f1), t0 + opts.dur);
     if (opts.detune) osc.detune.value = opts.detune;
@@ -145,6 +196,11 @@ export class AudioEngine {
         case 'shot': {
           const v = vol(ev.x, ev.y, ev.player === localId);
           if (v < 0.05) break;
+          if (ev.player !== localId) {
+            const now = performance.now();
+            if (this.gunThrottled(ev.gun, now)) break; // same non-local gun fired too recently
+            this.noteGun(ev.gun, now);
+          }
           this.voicesThisBatch++;
           this.gunShot(ev.gun, v);
           break;

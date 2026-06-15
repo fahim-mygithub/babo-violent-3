@@ -3,20 +3,33 @@ import { C } from './data/constants';
 import { ALL_CLASS_IDS, type ClassId } from './data/classes';
 import { ALL_GUN_IDS, GUNS, STARTER_GUN, type GunId } from './data/weapons';
 import { DEFAULT_MAP, MAPS } from './data/maps';
-import { GameSim } from './sim/sim';
+// initPhysics is light: the rapier WASM import lives *inside* it, pulled on first
+// call (host/local launch), never at module load. The GameSim implementation is
+// dynamically imported alongside it so the menu/entry chunk stays sim-free.
+import { initPhysics } from './sim/sim';
+import type { GameSim } from './sim/sim';
 import { emptyInput, type GameEvent, type ModeId, type PlayerState } from './sim/types';
-import { GameRenderer, type WorldView } from './render/renderer';
-import { Hud } from './render/hud';
-import { ScreenFx } from './render/screenfx';
-import { LobbyPreview } from './render/lobbyPreview';
+import type { GameRenderer, WorldView } from './render/renderer';
+import type { Hud } from './render/hud';
+import type { ScreenFx } from './render/screenfx';
+import type { LobbyPreview } from './render/lobbyPreview';
+import { shouldMountPreview } from './render/quality';
+import { makeGunIcon } from './render/gunIcons';
 import { InputManager } from './input';
+import type { InputSource } from './input';
+import { TouchControls, shouldUseTouch } from './touch/touchControls';
+import { viewportSize, onViewportChange } from './core/viewport';
 import { AudioEngine } from './audio/audio';
 import { UI, type LobbyConfig, type LobbyViewPlayer } from './ui/screens';
-import { HostSession } from './net/host';
-import { ClientSession } from './net/client';
+import type { HostSession } from './net/host';
+import type { ClientSession } from './net/client';
 import { sanitizeName, type MatchSettings } from './net/types';
 
 type Role = 'local' | 'host' | 'client';
+
+// Re-export the node-safe lobby-preview gate (defined in quality.ts) so callers /
+// tests can read it from the app entry without pulling the DOM-heavy LobbyPreview.
+export { shouldMountPreview } from './render/quality';
 
 const NAME_KEY = 'bv3-name';
 const CLASS_KEY = 'bv3-class';
@@ -26,9 +39,33 @@ function defaultScore(mode: ModeId): number {
   return mode === 'tdm' ? C.TDM_FRAG_LIMIT : mode === 'ctf' ? C.CTF_CAP_LIMIT : C.BOUNTY_WIN_SCORE;
 }
 
+/**
+ * Host match-commit ordering. `enter` (= App.enterMatch, whose first act awaits
+ * the render-chunk imports) MUST resolve — renderer + sim live — BEFORE `startMatch`
+ * tells every client to begin. A rejected render-chunk import then never commits
+ * the clients: it skips `startMatch` and runs `failToLobby` recovery instead, so
+ * no client is stranded in a started match the host failed to enter.
+ */
+export async function commitHostMatch(
+  enter: () => Promise<void>,
+  startMatch: () => void,
+  failToLobby: () => void,
+): Promise<void> {
+  try {
+    await enter();
+  } catch {
+    failToLobby();
+    return;
+  }
+  startMatch();
+}
+
 export class App {
   private ui: UI;
-  private input = new InputManager();
+  private kbm = new InputManager();
+  private touch: TouchControls | null = null;
+  private activeSource: InputSource = this.kbm;
+  private useTouch = false;
   private audio = new AudioEngine();
 
   // Lobby state
@@ -42,6 +79,9 @@ export class App {
   // Animated lobby showcase (persists across lobby re-renders; re-parented each time)
   private lobbyPreview: LobbyPreview | null = null;
   private previewCanvas: HTMLCanvasElement | null = null;
+  private previewIcon: HTMLCanvasElement | null = null; // static gun-icon fallback (low tier)
+  private previewLoading = false; // guards the async LobbyPreview import from double-construction
+  private prefetched = false;
 
   // Match state
   private role: Role = 'local';
@@ -54,6 +94,10 @@ export class App {
   private endTimer = -1;
   private escAt = 0;
   private lastSettings: MatchSettings | null = null;
+  // Screen Wake Lock sentinel; null when unheld (auto-released on hide → re-acquired).
+  private wakeLock: { release?: () => Promise<void> } | null = null;
+  // Viewport-change unsubscribe for the touch camera scalars (orientation flip).
+  private viewportUnsub: (() => void) | null = null;
 
   constructor(private container: HTMLElement) {
     (window as unknown as { __bv3: App }).__bv3 = this; // debug/test handle
@@ -63,9 +107,18 @@ export class App {
     this.classId = storedClass && ALL_CLASS_IDS.includes(storedClass) ? storedClass : 'spider';
     const storedGun = localStorage.getItem(GUN_KEY) as GunId | null;
     this.gunId = storedGun && ALL_GUN_IDS.includes(storedGun) ? storedGun : STARTER_GUN;
-    this.input.enabled = false;
+    this.kbm.enabled = false;
     window.addEventListener('keydown', this.onGlobalKey);
-    window.addEventListener('pointerdown', () => this.audio.resume(), { once: true });
+    // Broaden the unlock gesture set for iOS (pointerdown+touchend can both fire
+    // from one tap) and de-register ALL of them on the first success so the
+    // `unlocked` flag isn't relied on alone.
+    const unlockEvents = ['pointerdown', 'touchend', 'keydown'] as const;
+    const unlock = (): void => {
+      this.audio.unlock();
+      for (const ev of unlockEvents) window.removeEventListener(ev, unlock);
+    };
+    for (const ev of unlockEvents) window.addEventListener(ev, unlock);
+    document.addEventListener('visibilitychange', this.onVisibility);
   }
 
   start(): void {
@@ -121,30 +174,80 @@ export class App {
   private mountLobbyPreview(): void {
     const slot = this.container.querySelector('#preview-slot');
     if (!slot) return;
-    if (!this.lobbyPreview || !this.previewCanvas) {
-      const canvas = document.createElement('canvas');
-      canvas.className = 'preview-canvas';
-      this.previewCanvas = canvas;
-      this.lobbyPreview = new LobbyPreview(canvas);
-      this.lobbyPreview.onCaption = (txt) => {
-        const cap = document.getElementById('demo-caption');
-        if (cap) {
-          cap.textContent = txt ? `▶ ${txt}` : '';
-          cap.classList.toggle('on', !!txt);
-        }
-      };
-      this.lobbyPreview.start();
+    // S3.8: on low we never spin up a WebGL preview context — render a static gun
+    // icon instead and bail before any start()/setLoadout()/resize() call.
+    if (!shouldMountPreview()) {
+      this.renderStaticGunIcon(slot);
+      return;
     }
-    slot.insertBefore(this.previewCanvas, slot.firstChild);
-    this.lobbyPreview.setLoadout(this.classId, this.gunId);
-    this.lobbyPreview.resize();
+    // Already constructed: just re-parent + restate (synchronous, no flicker).
+    if (this.lobbyPreview && this.previewCanvas) {
+      slot.insertBefore(this.previewCanvas, slot.firstChild);
+      this.lobbyPreview.setLoadout(this.classId, this.gunId);
+      this.lobbyPreview.resize();
+      return;
+    }
+    if (this.previewLoading) return; // import in flight; a later showLobby will mount it
+    this.previewLoading = true;
+    void import('./render/lobbyPreview')
+      .then(({ LobbyPreview }) => {
+        this.previewLoading = false;
+        // The lobby may have been torn down (match entered / menu) while loading.
+        const liveSlot = this.container.querySelector('#preview-slot');
+        if (!liveSlot) return;
+        const canvas = document.createElement('canvas');
+        canvas.className = 'preview-canvas';
+        this.previewCanvas = canvas;
+        this.lobbyPreview = new LobbyPreview(canvas);
+        this.lobbyPreview.onCaption = (txt) => {
+          const cap = document.getElementById('demo-caption');
+          if (cap) {
+            cap.textContent = txt ? `▶ ${txt}` : '';
+            cap.classList.toggle('on', !!txt);
+          }
+        };
+        this.lobbyPreview.start();
+        liveSlot.insertBefore(canvas, liveSlot.firstChild);
+        this.lobbyPreview.setLoadout(this.classId, this.gunId);
+        this.lobbyPreview.resize();
+      })
+      .catch(() => { this.previewLoading = false; });
+  }
+
+  /**
+   * Static gun-icon fallback for the low tier (no WebGL preview context). Draws the
+   * 2D selector icon for the current gun into the preview slot; re-rendered on each
+   * loadout pick. Tolerates being called repeatedly (replaces the prior icon).
+   */
+  private renderStaticGunIcon(slot: Element): void {
+    const icon = makeGunIcon(this.gunId);
+    icon.className = 'preview-canvas preview-static';
+    this.previewIcon?.remove();
+    this.previewIcon = icon;
+    slot.insertBefore(icon, slot.firstChild);
   }
 
   private disposeLobbyPreview(): void {
     this.lobbyPreview?.dispose();
     this.previewCanvas?.remove();
+    this.previewIcon?.remove();
     this.lobbyPreview = null;
     this.previewCanvas = null;
+    this.previewIcon = null;
+  }
+
+  /**
+   * Fire-and-forget warm of the rapier + render chunks the moment a lobby opens,
+   * so the first cold local/host match doesn't freeze on a black screen while the
+   * WASM + render bundle download. Rejections are harmless — they re-import on use.
+   */
+  private prefetchMatchChunks(): void {
+    if (this.prefetched) return;
+    this.prefetched = true;
+    void import('@dimforge/rapier2d-compat').catch(() => {});
+    void import('./render/renderer').catch(() => {});
+    void import('./render/hud').catch(() => {});
+    void import('./render/screenfx').catch(() => {});
   }
 
   private showLocalLobby(): void {
@@ -179,11 +282,12 @@ export class App {
           if (modeChanged) this.cfg.scoreLimit = defaultScore(cfg.mode);
           this.showLocalLobby();
         },
-        onStart: () => this.launchLocalMatch(),
+        onStart: () => { void this.launchLocalMatch().catch(() => this.failToLobby()); },
         onLeave: () => this.showMenu(),
       },
     });
     this.mountLobbyPreview();
+    this.prefetchMatchChunks();
   }
 
   private async startHosting(): Promise<void> {
@@ -194,6 +298,7 @@ export class App {
         scoreLimit: this.cfg.scoreLimit, botCount: this.cfg.botCount,
         seed: Math.floor(Math.random() * 2 ** 31),
       };
+      const { HostSession } = await import('./net/host'); // pulls the peerjs chunk on host
       this.host = await HostSession.create(this.playerName, this.classId, this.gunId, settings);
       this.host.onLobby = () => this.showHostLobby();
       this.host.onError = (msg) => { this.ui.toast(`Connection error: ${msg}`); };
@@ -246,16 +351,18 @@ export class App {
             scoreLimit: cfg.mode !== host.settings.mode ? defaultScore(cfg.mode) : cfg.scoreLimit,
           });
         },
-        onStart: () => this.launchHostMatch(),
+        onStart: () => { void this.launchHostMatch().catch(() => this.failToLobby()); },
         onLeave: () => this.showMenu(),
       },
     });
     this.mountLobbyPreview();
+    this.prefetchMatchChunks();
   }
 
   private async joinGame(code: string): Promise<void> {
     this.ui.showConnecting('CONNECTING…', () => this.showMenu());
     try {
+      const { ClientSession } = await import('./net/client'); // pulls the peerjs chunk on join
       this.client = await ClientSession.join(code, this.playerName, this.classId, this.gunId);
       this.client.onLobby = () => this.showClientLobby();
       this.client.onClosed = (reason) => {
@@ -305,12 +412,17 @@ export class App {
   // Match lifecycle
   // ---------------------------------------------------------------------------
 
-  private buildSim(settings: MatchSettings): GameSim {
-    const sim = new GameSim({
+  /**
+   * Build a sim, pulling the rapier chunk + .wasm and the GameSim implementation
+   * here (never at boot). The CLIENT never calls this, so it never downloads Rapier.
+   */
+  private async loadSim(settings: MatchSettings): Promise<GameSim> {
+    await initPhysics(); // pulls the rapier chunk + .wasm here, never at boot
+    const { GameSim } = await import('./sim/sim');
+    return new GameSim({
       mapId: settings.mapId, mode: settings.mode, seed: settings.seed,
       scoreLimit: settings.scoreLimit,
     });
-    return sim;
   }
 
   private addBots(sim: GameSim, count: number, mode: ModeId, startTeam: number): void {
@@ -326,7 +438,7 @@ export class App {
     }
   }
 
-  private launchLocalMatch(): void {
+  private async launchLocalMatch(): Promise<void> {
     const settings: MatchSettings = {
       mode: this.cfg.mode, mapId: DEFAULT_MAP,
       scoreLimit: this.cfg.scoreLimit, botCount: this.cfg.botCount,
@@ -334,21 +446,21 @@ export class App {
     };
     this.lastSettings = settings;
     this.role = 'local';
-    const sim = this.buildSim(settings);
+    const sim = await this.loadSim(settings);
     const me = sim.addPlayer(this.playerName, this.classId, settings.mode === 'bounty' ? -1 : 0, false, this.gunId);
     this.addBots(sim, settings.botCount, settings.mode, 1);
     this.localId = me.id;
     this.sim = sim;
-    this.enterMatch(settings.mapId);
+    await this.enterMatch(settings.mapId);
   }
 
-  private launchHostMatch(): void {
+  private async launchHostMatch(): Promise<void> {
     const host = this.host;
     if (!host) return;
     const settings = { ...host.settings, seed: Math.floor(Math.random() * 2 ** 31) };
     this.lastSettings = settings;
     this.role = 'host';
-    const sim = this.buildSim(settings);
+    const sim = await this.loadSim(settings);
     const assignments = new Map<string, number>();
     let teamCursor = 0;
     for (const lp of host.players) {
@@ -359,30 +471,98 @@ export class App {
     }
     this.addBots(sim, settings.botCount, settings.mode, teamCursor);
     this.sim = sim;
-    host.startMatch(assignments);
-    this.enterMatch(settings.mapId);
+    // Bring the renderer/sim live (enterMatch awaits the render-chunk imports)
+    // BEFORE telling clients to start — a rejected import then never strands a
+    // client in a started match the host failed to enter (commitHostMatch skips
+    // startMatch and falls back to the lobby instead).
+    await commitHostMatch(
+      () => this.enterMatch(settings.mapId),
+      () => host.startMatch(assignments),
+      () => this.failToLobby(),
+    );
   }
 
+  // CLIENT path: never loads a sim and never imports Rapier — it renders the
+  // host's authoritative view, so it only needs the render chunk.
   private launchClientMatch(settings: MatchSettings, yourId: number): void {
     this.role = 'client';
     this.lastSettings = settings;
     this.localId = yourId;
     this.sim = null;
-    this.enterMatch(settings.mapId);
+    this.enterMatch(settings.mapId).catch(() => {
+      this.ui.toast('Failed to load — check connection');
+      this.showMenu();
+    });
   }
 
-  private enterMatch(mapId: string): void {
+  private async enterMatch(mapId: string): Promise<void> {
+    // Pull the render chunk BEFORE hiding the lobby so a slow/failed load never
+    // leaves a black screen — ui.hide() only runs once the imports resolve.
+    const [{ GameRenderer }, { Hud }, { ScreenFx }] = await Promise.all([
+      import('./render/renderer'), import('./render/hud'), import('./render/screenfx'),
+    ]);
     this.ui.hide();
     this.disposeLobbyPreview();
-    this.input.enabled = true;
+    this.kbm.enabled = true;
     this.endTimer = -1;
     document.body.style.cursor = 'none';
     const map = MAPS[mapId] ?? MAPS.grinder;
     this.renderer = new GameRenderer(this.container, map);
     this.hud = new Hud(this.container, (x, y, h) => this.renderer!.project(x, y, h));
     this.fx = new ScreenFx(this.container);
-    this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt));
+
+    // Touch is built lazily, only when it's the effective source (coarse pointer
+    // or the manual override). On desktop this stays false → activeSource is kbm,
+    // no #touch-layer is created, and the input path is byte-identical.
+    this.useTouch = shouldUseTouch();
+    if (this.useTouch) {
+      this.touch = new TouchControls(this.container, this.localId);
+      this.touch.onLeave = () => this.showMenu();
+      this.activeSource = this.touch;
+      document.body.classList.add('touch-mode');
+    } else {
+      this.activeSource = this.kbm;
+    }
+    this.hud.touchMode = this.useTouch;
+
+    // Touch camera (S1.13): zoom out 1.25× in portrait so the cramped vertical
+    // FOV still shows the fight; damp the aim-lead so the auto-fire stick doesn't
+    // yank the camera. On desktop useTouch is false → scalars stay 1/0/1 (camera
+    // byte-unchanged). Recompute on every orientation/URL-bar flip.
+    const applyTouchCam = (): void => {
+      if (!this.renderer) return;
+      const { w, h } = viewportSize();
+      const isPortrait = h > w;
+      this.renderer.aimLeadScale = this.useTouch ? 0.35 : 1;
+      this.renderer.camDistScale = (this.useTouch && isPortrait) ? 1.25 : 1;
+    };
+    applyTouchCam();
+    this.viewportUnsub = onViewportChange(applyTouchCam);
+
+    // Keep ticking while hidden for the AUTHORITATIVE roles — host AND local
+    // singleplayer (which owns its own sim, like main did). Only a true CLIENT
+    // pauses-and-resyncs on hide (it has no sim; it mirrors the host's snapshots).
+    const keepAliveWhenHidden = this.role !== 'client';
+    this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, keepAliveWhenHidden);
     this.loop.start();
+    void this.acquireWakeLock();
+
+    // Android-only progressive enhancement: go fullscreen so the URL bar / nav
+    // chrome stop stealing vertical space. Gated on a coarse pointer AND the
+    // presence of Element.requestFullscreen — iPhone Safari lacks it, so it
+    // silently no-ops and falls back to the visualViewport/safe-area layout
+    // (which never depends on fullscreen). NEVER lock orientation: portrait is a
+    // product decision, not a programmatic constraint. Rejection is swallowed.
+    const el = this.container as HTMLElement & { requestFullscreen?: () => Promise<void> };
+    if (
+      el.requestFullscreen &&
+      typeof matchMedia === 'function' &&
+      matchMedia('(pointer: coarse)').matches
+    ) {
+      el.requestFullscreen().catch(() => {
+        /* iOS / user-denied: the layout works without fullscreen. */
+      });
+    }
   }
 
   private view(): WorldView | null {
@@ -410,22 +590,46 @@ export class App {
 
   private sampleInput(view: WorldView | null) {
     const local = this.localPlayer(view);
-    if (!local || !this.renderer) return emptyInput();
-    const ground = this.renderer.groundPoint(this.input.mouseX, this.input.mouseY);
-    return this.input.sample(ground, local.x, local.y);
+    if (!local) return emptyInput();
+    return this.samplePos(local.x, local.y);
+  }
+
+  /**
+   * Produce this frame's input given the local player's position. Split out from
+   * sampleInput so the client tick path can feed predictedSelf() (S5.4) and avoid
+   * forcing a full interpolated view rebuild just to read the own-babo position.
+   */
+  private samplePos(px: number, py: number) {
+    if (!this.renderer) return emptyInput();
+    // Touch path: the producer computes its own aim from the right stick, so it
+    // gets a zero ground (no mouse unprojection) + the live world for aim-assist
+    // (set via setWorld at the call site).
+    if (this.activeSource === this.touch && this.touch) {
+      return this.touch.sample({ x: 0, y: 0 }, px, py);
+    }
+    const ground = this.renderer.groundPoint(this.kbm.mouseX, this.kbm.mouseY);
+    return this.kbm.sample(ground, px, py);
   }
 
   private tick(): void {
     if (this.role === 'client') {
       const client = this.client;
       if (!client) return;
-      const input = this.sampleInput(client.view);
+      // Per-tick own-babo position comes from the predictor, never the full view —
+      // so the tick loop doesn't trigger an interpolated rebuild. The touch source
+      // still needs the live world for aim-assist, so only it reads client.view
+      // (a cache hit within the frame thanks to view memoization).
+      const self = client.predictedSelf();
+      if (this.activeSource === this.touch && this.touch) this.touch.setWorld(client.view, this.localId);
+      const input = self ? this.samplePos(self.x, self.y) : emptyInput();
       client.sendInput(input);
       return;
     }
     const sim = this.sim;
     if (!sim) return;
-    const input = this.sampleInput(this.view());
+    const view = this.view();
+    this.touch?.setWorld(view, this.localId);
+    const input = this.sampleInput(view);
     sim.setInput(this.localId, input);
     this.host?.applyInputs(sim);
     sim.step();
@@ -456,8 +660,17 @@ export class App {
     const view = this.view();
     if (!view || !this.renderer || !this.hud || !this.fx) return;
     const local = this.localPlayer(view);
+    // Touch aim laser (S1.10): draw along the grenade arc while it's held, else
+    // the gun aim, only while the right stick / arc is active. Desktop leaves this
+    // untouched (no touch source → no laser ever).
+    if (this.touch) {
+      const arc = this.touch.grenadeArc;
+      this.renderer.setAimState(arc.active ? arc.aim : this.touch.aimAngle, arc.active || this.touch.aimActive);
+    }
     this.renderer.render(view, this.localId, frameDt);
-    this.hud.update(view, this.localId, { x: this.input.mouseX, y: this.input.mouseY }, this.input.showScores, frameDt);
+    this.hud.update(view, this.localId, { x: this.kbm.mouseX, y: this.kbm.mouseY }, this.activeSource.showScores, frameDt);
+    // PICKUP button is shown only while the HUD pickup prompt is live (S1.7).
+    this.touch?.setPickupVisible(this.hud.pickupPromptActive);
     this.fx.update(local, frameDt);
     this.audio.update(local, frameDt);
 
@@ -468,7 +681,7 @@ export class App {
   }
 
   private showEndScreen(view: WorldView): void {
-    this.input.enabled = false;
+    this.kbm.enabled = false;
     document.body.style.cursor = '';
     const players = [...view.players];
     this.ui.showEnd({
@@ -479,12 +692,19 @@ export class App {
       onAgain: this.role !== 'client'
         ? () => {
             this.teardownMatch();
-            if (this.role === 'host') this.launchHostMatch();
-            else this.launchLocalMatch();
+            const again = this.role === 'host' ? this.launchHostMatch() : this.launchLocalMatch();
+            void again.catch(() => this.failToLobby());
           }
         : undefined,
       onMenu: () => this.showMenu(),
     });
+  }
+
+  /** A rejected match-entry import (chunk/WASM fetch failed) restores the lobby instead of a black screen. */
+  private failToLobby(): void {
+    this.teardownMatch();
+    this.ui.toast('Failed to load — check connection');
+    this.showMenu();
   }
 
   private onClientMatchEnd(_winner: number): void {
@@ -493,6 +713,34 @@ export class App {
   }
 
   // ---------------------------------------------------------------------------
+
+  /**
+   * Hidden tab → suspend audio ONLY (the FixedLoop keeps ticking so a host stays
+   * authoritative). Foreground → re-arm audio and re-acquire the wake lock (it
+   * auto-releases when hidden).
+   */
+  private onVisibility = (): void => {
+    if (document.hidden) {
+      this.audio.suspend();
+    } else {
+      this.audio.resumeIfUnlocked();
+      void this.acquireWakeLock();
+    }
+  };
+
+  /** Keep the screen awake during a match. Feature-detected + try/catch (iOS<16.4 degrades silently). */
+  private async acquireWakeLock(): Promise<void> {
+    if (!this.loop) return; // only during a match
+    const navigator = window.navigator as Navigator & { wakeLock?: { request(type: 'screen'): Promise<{ release?: () => Promise<void> }> } };
+    try {
+      if (navigator.wakeLock) this.wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* unsupported or denied — the screen may dim; harmless */ }
+  }
+
+  private releaseWakeLock(): void {
+    void this.wakeLock?.release?.();
+    this.wakeLock = null;
+  }
 
   private onGlobalKey = (e: KeyboardEvent): void => {
     if (e.code === 'Escape' && this.loop) {
@@ -508,6 +756,9 @@ export class App {
   };
 
   private teardownMatch(): void {
+    this.releaseWakeLock();
+    this.viewportUnsub?.();
+    this.viewportUnsub = null;
     this.loop?.stop();
     this.loop = null;
     this.renderer?.dispose();
@@ -517,7 +768,12 @@ export class App {
     this.fx?.dispose();
     this.fx = null;
     this.sim = null;
-    this.input.enabled = false;
+    this.touch?.dispose();
+    this.touch = null;
+    this.activeSource = this.kbm;
+    this.useTouch = false;
+    document.body.classList.remove('touch-mode');
+    this.kbm.enabled = false;
     document.body.style.cursor = '';
   }
 

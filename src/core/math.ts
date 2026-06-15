@@ -39,6 +39,13 @@ export function norm(x: number, y: number): [number, number] {
   return [x / l, y / l];
 }
 
+/** Zero-alloc normalize into `out`. Returns `out`. Same float ops as norm(). */
+export function normInto(x: number, y: number, out: [number, number]): [number, number] {
+  const l = Math.hypot(x, y);
+  if (l < 1e-9) { out[0] = 0; out[1] = 0; return out; }
+  out[0] = x / l; out[1] = y / l; return out;
+}
+
 export function angleTo(ax: number, ay: number, bx: number, by: number): number {
   return Math.atan2(by - ay, bx - ax);
 }
@@ -91,20 +98,27 @@ export function segAABB(
   const minY = cy - h / 2, maxY = cy + h / 2;
   let tmin = 0;
   let tmax = 1;
-  for (const [p, d, lo, hi] of [
-    [x0, dx, minX, maxX],
-    [y0, dy, minY, maxY],
-  ] as const) {
-    if (Math.abs(d) < 1e-12) {
-      if (p < lo || p > hi) return -1;
-    } else {
-      let t1 = (lo - p) / d;
-      let t2 = (hi - p) / d;
-      if (t1 > t2) [t1, t2] = [t2, t1];
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) return -1;
-    }
+  // X slab
+  if (Math.abs(dx) < 1e-12) {
+    if (x0 < minX || x0 > maxX) return -1;
+  } else {
+    let t1 = (minX - x0) / dx;
+    let t2 = (maxX - x0) / dx;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return -1;
+  }
+  // Y slab
+  if (Math.abs(dy) < 1e-12) {
+    if (y0 < minY || y0 > maxY) return -1;
+  } else {
+    let t1 = (minY - y0) / dy;
+    let t2 = (maxY - y0) / dy;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return -1;
   }
   return tmin;
 }

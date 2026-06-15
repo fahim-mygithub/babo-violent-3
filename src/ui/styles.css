@@ -13,6 +13,13 @@
   --green: #46d05a;
   --blue: #6aa8ff;
   --red: #ff6a6a;
+  /* Device safe-area insets (notch/home-indicator), surfaced for the HUD status
+     panel to read via getComputedStyle('--bv3-safe-*'). env() resolves to 0 on
+     desktop and inside non-cover viewports, so this is desktop-inert. */
+  --bv3-safe-top: env(safe-area-inset-top);
+  --bv3-safe-right: env(safe-area-inset-right);
+  --bv3-safe-bottom: env(safe-area-inset-bottom);
+  --bv3-safe-left: env(safe-area-inset-left);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -204,6 +211,19 @@ input.field:focus { border-color: var(--blood-bright); }
 .gun-ico { width: 42px; height: 18px; display: block; }
 .gun-name { font-weight: 600; }
 
+/* Inline tooltip (S6.5): on touch, the hover-only title="" role/identity is
+   redundant, so surface it as a tiny caption under the card/chip. Hidden on
+   desktop (>=761px) where the native title tooltip already covers hover. The
+   flex-basis:100% pushes it to its own line inside the inline-flex .gun-chip. */
+.tooltip-inline {
+  display: block;
+  flex-basis: 100%;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--dim);
+  margin-top: 3px;
+}
+
 .class-detail { margin-top: 12px; font-size: 13px; color: var(--dim); line-height: 1.5; min-height: 58px; }
 .class-detail b { color: var(--text); }
 .class-detail .ab { color: var(--gold); }
@@ -268,3 +288,97 @@ input.field:focus { border-color: var(--blood-bright); }
 .howto h4 { color: var(--blood-bright); margin: 14px 0 4px; letter-spacing: 1px; }
 
 .footnote { position: absolute; bottom: 16px; color: var(--dim); font-size: 11.5px; letter-spacing: 1px; }
+
+/* ---------- mobile play-surface gesture suppression ----------
+   Scoped to the play surfaces ONLY (canvases + touch layer). The .screen scroll
+   containers keep touch-action:auto so menus/lobby still scroll and tap. */
+html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+/* The touch overlay is created lazily by TouchControls (#touch-layer); size it
+   to fill the play surface so the analog sticks read across the whole viewport,
+   and keep touch-action:none so gestures never scroll the page during a match.
+   Sits above the game canvases but below the .screen menus (z 100). */
+#touch-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  touch-action: none;
+}
+#game-canvas, #hud-canvas, #fx-canvas, #touch-layer {
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- portrait control band (S8.6) ----------
+   The play surface splits: arena reads the top ~60%, on-screen controls the
+   bottom ~40%. The analog sticks are floating-origin (no fixed DOM box) and the
+   touchControls hit zones already confine them to the lower half (left <45%w &
+   >50%h; right >45%w & >60%h). The edge BUTTONS are positioned here against the
+   bottom edge so the whole control cluster lives in the bottom band, clear of the
+   notch/home-indicator via the safe-area insets. Explicit longhand offsets (not
+   the `inset`/`bottom` shorthand) so a headless jsdom CSSOM can resolve the band
+   intent. The buttons are children of #touch-layer (z 90), so they ride above the
+   game canvases but below the .screen menus. */
+.tc-btn {
+  position: absolute;
+  top: auto;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  right: calc(18px + env(safe-area-inset-right));
+  min-width: 64px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(20, 22, 28, 0.6);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  user-select: none;
+}
+/* Action cluster stacks up the bottom-right corner (skill highest, equip lowest). */
+#tc-skill  { bottom: calc(214px + env(safe-area-inset-bottom)); }
+#tc-reload { bottom: calc(116px + env(safe-area-inset-bottom)); }
+#tc-equip  { bottom: calc(18px  + env(safe-area-inset-bottom)); }
+#tc-pickup { bottom: calc(214px + env(safe-area-inset-bottom)); right: calc(92px + env(safe-area-inset-right)); }
+/* Scoreboard + leave ride the TOP band (out of the thumb zone), bottom:auto. */
+#tc-scores { top: calc(14px + env(safe-area-inset-top)); right: calc(92px + env(safe-area-inset-right)); bottom: auto; }
+#tc-leave  { top: calc(14px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); bottom: auto; }
+
+/* ---------- portrait phone layout (S6.5) ----------
+   FIRST @media block in the project. Everything above is the desktop cascade and
+   stays byte-identical — these rules only apply at <=760px. The fixed 3-col
+   .lobby grid collapses to one column; .screen becomes the scroll container
+   (touch-action:pan-y so menus still scroll vertically — NOT none); tap targets
+   grow to >=44px; form fonts hit 16px to defeat iOS focus-zoom. Safe-area padding
+   keeps content clear of the notch/home-indicator. */
+@media (max-width: 760px) {
+  .lobby {
+    grid-template-columns: 1fr;
+    width: 96vw;
+  }
+  .screen {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    justify-content: flex-start;
+    padding: max(18px, env(safe-area-inset-top)) env(safe-area-inset-right)
+             max(18px, env(safe-area-inset-bottom)) env(safe-area-inset-left);
+  }
+  .title { font-size: clamp(34px, 12vw, 64px); letter-spacing: 3px; }
+  .screen h1 { font-size: clamp(28px, 9vw, 48px); }
+  .menu-col { width: min(420px, 92vw); }
+  .class-card, .gun-chip, button.btn, button.btn.small {
+    min-height: 44px;
+  }
+  .gun-chip { align-items: center; }
+  input, select, textarea, input.field { font-size: 16px; }
+  .class-card:active, .gun-chip:active, button.btn:active { transform: scale(0.97); }
+}
+
+/* ---------- desktop hover tooltips (S6.5) ----------
+   On desktop (>=761px) the native title="" tooltip covers hover, so the inline
+   captions are redundant — hide them. Touch (<=760px) keeps them visible. */
+@media (min-width: 761px) {
+  .tooltip-inline { display: none; }
+}

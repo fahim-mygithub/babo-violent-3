@@ -1,11 +1,12 @@
-import * as THREE from 'three';
+import { CanvasTexture, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Euler, Group, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, Object3D, PlaneGeometry, Quaternion, SRGBColorSpace, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial, Vector3 } from 'three';
 import { C } from '../data/constants';
 import { CLASSES } from '../data/classes';
 import type { GunId } from '../data/weapons';
 import type { PlayerState } from '../sim/types';
 import { makeBaboMaterial } from './baboShader';
-import { buildGunModel, disposeGunModel } from './gunModels';
-import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboShapes';
+import { QUALITY } from './quality';
+import { buildGunModel, disposeGunModel, disposeGunCache } from './gunModels';
+import { buildClassVisual, disposeClassVisual, disposeClassCache, type ClassVisual } from './baboShapes';
 
 /**
  * Diegetic-health Babo: the sphere visibly fills with blood as it takes
@@ -15,22 +16,82 @@ import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboSh
  * (shared with the lobby preview).
  */
 interface BaboVisual {
-  group: THREE.Group;
-  body: THREE.Mesh;
-  mat: THREE.ShaderMaterial;
-  mount: THREE.Group;        // upright; yaws to aim, holds the gun model
-  gun: THREE.Group;
+  group: Group;
+  body: Mesh;
+  mat: ShaderMaterial;
+  mount: Group;        // upright; yaws to aim, holds the gun model
+  gun: Group;
   gunId: GunId;              // current held gun (rebuild the model on scavenge swap)
   visual: ClassVisual;       // class-distinctive accessories
   phased: boolean;           // last-applied Phantom phase fade state
-  shadow: THREE.Mesh;
-  marker: THREE.Mesh;      // bounty leader crown
-  flagPole: THREE.Group;   // CTF carry indicator
-  nameTag: THREE.Sprite;
+  marker: Mesh;      // bounty leader crown
+  flagPole: Group;   // CTF carry indicator
+  nameTag: Sprite;
+}
+
+/**
+ * The new `transparent` flag for the babo body at a phase transition, or null when
+ * the phase state is unchanged (no GL state churn). The body is opaque by default
+ * (cheaper) and only goes transparent while a Phantom phase is active.
+ */
+export function phaseTransition(phaseActive: boolean, prevPhased: boolean): boolean | null {
+  if (phaseActive === prevPhased) return null;
+  return phaseActive;
+}
+
+/** Max simultaneous players (and so babo shadow instances) in a match. */
+const MAX_PLAYERS = 8;
+
+/** Ground-disc geometry rotation (lie flat on the floor, facing +Y). */
+const SHADOW_ROT = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, 0));
+
+/**
+ * All babo contact shadows in ONE InstancedMesh (S3.5b) — 8 ground discs drawn in
+ * a single draw call instead of 8 meshes. Pixel-identical to the old per-babo
+ * shadows: same radius (BABO_RADIUS*1.1), colour, opacity, and world height. A dead
+ * or absent babo's instance is zero-scaled so it disappears. All tiers (lossless).
+ */
+export class ShadowInstances {
+  readonly mesh: InstancedMesh;
+  private m = new Matrix4();
+  private pos = new Vector3();
+  private scl = new Vector3();
+
+  constructor() {
+    const geo = new CircleGeometry(C.BABO_RADIUS * 1.1, 20);
+    // Default depthWrite (true) matches main's old per-babo shadow material →
+    // desktop byte-identical render-pass ordering.
+    const mat = new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
+    this.mesh = new InstancedMesh(geo, mat, MAX_PLAYERS);
+    // InstancedMesh caches its bounding sphere on the first frustum check and
+    // setMatrixAt never invalidates it — with culling on, the whole shadow mesh
+    // culls out once the babos roam past the origin-centred initial bounds.
+    this.mesh.frustumCulled = false;
+    for (let i = 0; i < MAX_PLAYERS; i++) this.set(i, 0, 0, false);
+  }
+
+  /** Place instance `i` at sim (x,y); zero-scale it when not alive. */
+  set(i: number, x: number, y: number, alive: boolean): void {
+    if (!alive) {
+      this.pos.set(0, 0, 0);
+      this.scl.set(0, 0, 0);
+    } else {
+      this.pos.set(x, 0.02, y); // world height matches the old per-babo shadow
+      this.scl.set(1, 1, 1);
+    }
+    this.m.compose(this.pos, SHADOW_ROT, this.scl);
+    this.mesh.setMatrixAt(i, this.m);
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  dispose(): void {
+    this.mesh.geometry.dispose();
+    (this.mesh.material as MeshBasicMaterial).dispose();
+  }
 }
 
 /** BV2-style floating name tag (canvas-rendered, white with dark outline). */
-function makeNameSprite(name: string): THREE.Sprite {
+function makeNameSprite(name: string): Sprite {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 48;
@@ -43,9 +104,9 @@ function makeNameSprite(name: string): THREE.Sprite {
   g.strokeText(name, 128, 24);
   g.fillStyle = 'rgba(235,240,245,0.95)';
   g.fillText(name, 128, 24);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+  const tex = new CanvasTexture(c);
+  tex.colorSpace = SRGBColorSpace;
+  const sprite = new Sprite(new SpriteMaterial({
     map: tex, transparent: true, depthWrite: false,
   }));
   sprite.scale.set(2.2, 0.41, 1);
@@ -55,9 +116,9 @@ function makeNameSprite(name: string): THREE.Sprite {
 
 /** Set transparent+opacity on every (opaque) material under an object — Phantom
  *  phase fade for the held gun, restored cleanly when phase ends. */
-function setGroupOpacity(obj: THREE.Object3D, opacity: number): void {
+function setGroupOpacity(obj: Object3D, opacity: number): void {
   obj.traverse((o) => {
-    const m = (o as THREE.Mesh).material;
+    const m = (o as Mesh).material;
     const mats = Array.isArray(m) ? m : m ? [m] : [];
     for (const mm of mats) {
       mm.transparent = opacity < 1;
@@ -67,14 +128,14 @@ function setGroupOpacity(obj: THREE.Object3D, opacity: number): void {
 }
 
 /** Recursively dispose geometries, materials and any material textures. */
-function disposeObject3D(obj: THREE.Object3D): void {
+function disposeObject3D(obj: Object3D): void {
   obj.traverse((o) => {
-    const mesh = o as THREE.Mesh;
+    const mesh = o as Mesh;
     if (mesh.geometry) mesh.geometry.dispose();
     const m = mesh.material;
     const mats = Array.isArray(m) ? m : m ? [m] : [];
     for (const mm of mats) {
-      const tex = (mm as THREE.MeshBasicMaterial).map ?? (mm as THREE.SpriteMaterial).map;
+      const tex = (mm as MeshBasicMaterial).map ?? (mm as SpriteMaterial).map;
       if (tex) tex.dispose();
       mm.dispose();
     }
@@ -83,34 +144,35 @@ function disposeObject3D(obj: THREE.Object3D): void {
 
 export class BaboPool {
   private visuals = new Map<number, BaboVisual>();
-  private sphereGeo = new THREE.SphereGeometry(C.BABO_RADIUS, 28, 20);
-  private shadowGeo = new THREE.CircleGeometry(C.BABO_RADIUS * 1.1, 20);
-  private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
-  private tmpAxis = new THREE.Vector3();
-  private tmpQuat = new THREE.Quaternion();
+  private sphereGeo = new SphereGeometry(C.BABO_RADIUS, 28, 20);
+  private shadows = new ShadowInstances();
+  private tmpAxis = new Vector3();
+  private tmpQuat = new Quaternion();
 
-  constructor(private scene: THREE.Scene) {}
+  constructor(private scene: Scene) {
+    this.scene.add(this.shadows.mesh);
+  }
 
   private create(p: PlayerState): BaboVisual {
     const cls = CLASSES[p.classId];
-    const group = new THREE.Group();
+    const group = new Group();
 
     // Class-distinctive accessories + cosmetic body scale (baboShapes.ts).
     const visual = buildClassVisual(p.classId, C.BABO_RADIUS);
     const mat = makeBaboMaterial(cls.color, C.BABO_RADIUS, C.BABO_RADIUS * visual.bodyScale);
-    const body = new THREE.Mesh(this.sphereGeo, mat);
+    const body = new Mesh(this.sphereGeo, mat);
     body.scale.setScalar(visual.bodyScale);
     group.add(body);
     for (const o of visual.roll) body.add(o);     // tumble with the ball (inherits bodyScale)
     // Upright bits ride a bodyScale wrapper so they track the scaled shell too.
-    const uprightHolder = new THREE.Group();
+    const uprightHolder = new Group();
     uprightHolder.scale.setScalar(visual.bodyScale);
     for (const o of visual.upright) uprightHolder.add(o);
     group.add(uprightHolder);
 
     // Aim mount: upright group that yaws to aim while the ball rolls under it.
     // True to BV2, the babo has no face — the held gun is the only oriented part.
-    const mount = new THREE.Group();
+    const mount = new Group();
     group.add(mount);
 
     // Held gun: a distinct 3D model per weapon, muzzle along aim (+X).
@@ -118,15 +180,13 @@ export class BaboPool {
     gun.position.set(0.45, 0.06, 0);
     mount.add(gun);
 
-    const shadow = new THREE.Mesh(this.shadowGeo, this.shadowMat);
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.y = -C.BABO_RADIUS + 0.02;
-    group.add(shadow);
+    // Contact shadow is drawn by the shared ShadowInstances (one InstancedMesh),
+    // updated per frame in update() — not parented to the babo group.
 
     // Bounty leader crown: visible through walls
-    const marker = new THREE.Mesh(
-      new THREE.ConeGeometry(0.28, 0.42, 4),
-      new THREE.MeshBasicMaterial({ color: 0xffc83a, depthTest: false, transparent: true, opacity: 0.95 }),
+    const marker = new Mesh(
+      new ConeGeometry(0.28, 0.42, 4),
+      new MeshBasicMaterial({ color: 0xffc83a, depthTest: false, transparent: true, opacity: 0.95 }),
     );
     marker.position.y = 1.6; // above the name tag
     marker.rotation.x = Math.PI;
@@ -135,15 +195,15 @@ export class BaboPool {
     group.add(marker);
 
     // CTF flag indicator
-    const flagPole = new THREE.Group();
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.03, 0.03, 0.9),
-      new THREE.MeshBasicMaterial({ color: 0xcccccc }),
+    const flagPole = new Group();
+    const pole = new Mesh(
+      new CylinderGeometry(0.03, 0.03, 0.9),
+      new MeshBasicMaterial({ color: 0xcccccc }),
     );
     pole.position.y = 1.1;
-    const cloth = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.45, 0.3),
-      new THREE.MeshBasicMaterial({ color: 0xff3333, side: THREE.DoubleSide }),
+    const cloth = new Mesh(
+      new PlaneGeometry(0.45, 0.3),
+      new MeshBasicMaterial({ color: 0xff3333, side: DoubleSide }),
     );
     cloth.position.set(0.24, 1.4, 0);
     flagPole.add(pole, cloth);
@@ -156,7 +216,7 @@ export class BaboPool {
     this.scene.add(group);
     const vis: BaboVisual = {
       group, body, mat, mount, gun, gunId: p.gun, visual, phased: false,
-      shadow, marker, flagPole, nameTag,
+      marker, flagPole, nameTag,
     };
     this.visuals.set(p.id, vis);
     return vis;
@@ -164,11 +224,15 @@ export class BaboPool {
 
   update(players: Iterable<PlayerState>, dt: number, time: number, leaderId: number): void {
     const seen = new Set<number>();
+    let shadowIdx = 0; // contiguous instance slot for each LIVE babo this frame
     for (const p of players) {
       seen.add(p.id);
       const vis = this.visuals.get(p.id) ?? this.create(p);
       vis.group.visible = p.alive;
       if (!p.alive) continue;
+
+      // One shared shadow instance per live babo (zeroed slots filled in below).
+      if (shadowIdx < MAX_PLAYERS) this.shadows.set(shadowIdx++, p.x, p.y, true);
 
       vis.group.position.set(p.x, C.BABO_RADIUS, p.y);
 
@@ -209,6 +273,17 @@ export class BaboPool {
       // Phase Shift fades the body shader; fade the held gun to match so it
       // doesn't float opaque beside a ghost body. Toggle only on transition.
       if (p.phaseActive !== vis.phased) {
+        // On the mobile tiers the body is opaque by default, so flip its
+        // transparency at the phase edge — true on phase-in so uOpacity 0.32 blends,
+        // false on phase-out so it's back on the cheap opaque path. On HIGH the body
+        // is transparent-by-default (parity with main); never flip it opaque there,
+        // keeping the desktop render-pass ordering byte-identical. Toggling
+        // transparent/opacity needs no shader recompile, so no needsUpdate. The
+        // per-frame uOpacity write above stays unconditional.
+        if (QUALITY.baboBodyTransparent === false) {
+          const t = phaseTransition(p.phaseActive, vis.phased);
+          if (t !== null) vis.mat.transparent = t;
+        }
         vis.phased = p.phaseActive;
         setGroupOpacity(vis.gun, p.phaseActive ? 0.32 : 1);
       }
@@ -217,10 +292,14 @@ export class BaboPool {
       if (vis.marker.visible) vis.marker.rotation.y = time * 2;
       vis.flagPole.visible = p.carryingFlag !== -1;
       if (p.carryingFlag !== -1) {
-        (vis.flagPole.children[1] as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>)
+        (vis.flagPole.children[1] as Mesh<PlaneGeometry, MeshBasicMaterial>)
           .material.color.setHex(p.carryingFlag === 0 ? 0x4a8cff : 0xff4a4a);
       }
     }
+    // Zero the matrix of every shadow instance not claimed by a live babo so dead
+    // / absent players cast no disc.
+    for (let i = shadowIdx; i < MAX_PLAYERS; i++) this.shadows.set(i, 0, 0, false);
+
     // Remove visuals for departed players
     for (const [id, vis] of this.visuals) {
       if (!seen.has(id)) {
@@ -249,7 +328,11 @@ export class BaboPool {
     }
     this.visuals.clear();
     this.sphereGeo.dispose();
-    this.shadowGeo.dispose();
-    this.shadowMat.dispose();
+    this.scene.remove(this.shadows.mesh);
+    this.shadows.dispose();
+    // Free the low/mid template caches now that no babo references them (no-op on
+    // high, where the caches were never populated).
+    disposeGunCache();
+    disposeClassCache();
   }
 }

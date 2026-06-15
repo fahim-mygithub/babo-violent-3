@@ -11,6 +11,7 @@ export const BTN = {
   THROW: 2,
   ABILITY: 4,
   PICKUP: 8,
+  RELOAD: 16,
 } as const;
 
 export interface PlayerInput {
@@ -112,7 +113,7 @@ export interface PlayerState {
 // World entities
 // ---------------------------------------------------------------------------
 
-export type ProjectileKind = 'bullet' | 'rocket' | 'flame';
+export type ProjectileKind = 'bullet' | 'rocket' | 'flame' | 'rail';
 
 export interface Projectile {
   id: number;
@@ -122,6 +123,9 @@ export interface Projectile {
   team: Team;
   x: number;
   y: number;
+  /** Spawn origin (muzzle) — captured so the terminal rail beam draws from the muzzle. */
+  ox: number;
+  oy: number;
   vx: number;
   vy: number;
   damage: number;

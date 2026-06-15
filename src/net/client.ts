@@ -46,6 +46,19 @@ export class ClientSession {
   private pred = { x: 0, y: 0, vx: 0, vy: 0, valid: false };
   private rendered = { x: 0, y: 0 };
 
+  // view memoization (S5.4) — keyed on the rounded interp timestamp. The view is
+  // read twice per frame (render frame + dispatchEvents); recompute only when the
+  // interp target advances AND a 'snap'/'events'/'end' mutation set the dirty flag.
+  private viewCache: WorldView | null = null;
+  private viewKey = -1;
+  private viewDirty = true;
+  // Reused per-id lookup maps + the interpolated players array, repopulated each
+  // rebuild (.clear() + fill) instead of re-allocating, to cut per-frame churn.
+  private olderPlayers = new Map<number, PlayerState>();
+  private olderProj = new Map<number, Snapshot['projectiles'][number]>();
+  private olderGren = new Map<number, Snapshot['grenades'][number]>();
+  private viewPlayers: PlayerState[] = [];
+
   static join(code: string, name: string, classId: ClassId, gun: GunId): Promise<ClientSession> {
     const s = new ClientSession();
     s.classId = classId;
@@ -131,18 +144,22 @@ export class ClientSession {
         this.pending.length = 0;
         this.pred.valid = false;
         this.endWinner = null;
+        this.viewDirty = true;
         this.onStart(msg.settings, msg.yourId);
         break;
       case 'snap':
         this.snaps.push({ snap: msg.snap, at: performance.now() });
         if (this.snaps.length > 12) this.snaps.shift();
         this.reconcile(msg.snap);
+        this.viewDirty = true;
         break;
       case 'events':
         this.eventQueue.push(...msg.events);
+        this.viewDirty = true;
         break;
       case 'end':
         this.endWinner = msg.winner;
+        this.viewDirty = true;
         this.onEnd(msg.winner);
         break;
       case 'reject':
@@ -246,6 +263,10 @@ export class ClientSession {
       const k = Math.min(1, 12 * dt);
       this.rendered.x += (this.pred.x - this.rendered.x) * k;
       this.rendered.y += (this.pred.y - this.rendered.y) * k;
+      // The view memo bakes `rendered` into the local player's position; the lerp
+      // just moved it, so invalidate the cache or two reads bracketing this update
+      // in the same rounded-ms bucket would report a stale local position.
+      this.viewDirty = true;
     }
   }
 
@@ -253,7 +274,32 @@ export class ClientSession {
   // Interpolated view
   // -------------------------------------------------------------------------
 
+  /**
+   * Cheap own-babo accessor for the per-tick input path (S5.4) — never builds the
+   * full interpolated view. Returns the predicted position when prediction is live,
+   * else the newest authoritative snapshot position. Matches the own-babo position
+   * the full view reports for the local player.
+   */
+  predictedSelf(): { x: number; y: number } | null {
+    if (this.pred.valid) return { x: this.rendered.x, y: this.rendered.y };
+    const newest = this.snaps[this.snaps.length - 1];
+    const me = newest?.snap.players.find((p) => p.id === this.myId);
+    return me ? { x: me.x, y: me.y } : null;
+  }
+
   get view(): WorldView | null {
+    if (this.snaps.length === 0) return null;
+    // Memo key: the rounded interp target. A cached view is reused only while the
+    // target hasn't advanced AND no mutating message dirtied it since.
+    const key = Math.round(performance.now() - C.INTERP_BUFFER_MS);
+    if (!this.viewDirty && key === this.viewKey && this.viewCache) return this.viewCache;
+    this.viewKey = key;
+    this.viewDirty = false;
+    this.viewCache = this.buildView();
+    return this.viewCache;
+  }
+
+  private buildView(): WorldView | null {
     if (this.snaps.length === 0) return null;
     const newest = this.snaps[this.snaps.length - 1];
     const target = performance.now() - C.INTERP_BUFFER_MS;
@@ -269,8 +315,12 @@ export class ClientSession {
     const span = Math.max(1, b.at - a.at);
     const t = a === b ? 1 : clamp((target - a.at) / span, 0, 1);
 
-    const olderPlayers = new Map(a.snap.players.map((p) => [p.id, p]));
-    const players: PlayerState[] = b.snap.players.map((pb) => {
+    const olderPlayers = this.olderPlayers;
+    olderPlayers.clear();
+    for (const p of a.snap.players) olderPlayers.set(p.id, p);
+    const players = this.viewPlayers;
+    players.length = 0;
+    for (const pb of b.snap.players) {
       const pa = olderPlayers.get(pb.id);
       const p: PlayerState = { ...pb };
       if (pa && pa.alive && pb.alive) {
@@ -288,15 +338,19 @@ export class ClientSession {
         p.aim = this.pending.length > 0 ? this.pending[this.pending.length - 1].aim : pb.aim;
         p.input = this.pending.length > 0 ? this.pending[this.pending.length - 1] : pb.input;
       }
-      return p;
-    });
+      players.push(p);
+    }
 
-    const olderProj = new Map(a.snap.projectiles.map((e) => [e.id, e]));
+    const olderProj = this.olderProj;
+    olderProj.clear();
+    for (const e of a.snap.projectiles) olderProj.set(e.id, e);
     const projectiles = b.snap.projectiles.map((eb) => {
       const ea = olderProj.get(eb.id);
       return ea ? { ...eb, x: lerp(ea.x, eb.x, t), y: lerp(ea.y, eb.y, t) } : { ...eb };
     });
-    const olderGren = new Map(a.snap.grenades.map((e) => [e.id, e]));
+    const olderGren = this.olderGren;
+    olderGren.clear();
+    for (const e of a.snap.grenades) olderGren.set(e.id, e);
     const grenades = b.snap.grenades.map((eb) => {
       const ea = olderGren.get(eb.id);
       return ea

@@ -1,7 +1,8 @@
 import { TAU, angleDiff, angleTo, clamp, dist, norm } from '../../core/math';
 import { ABILITY } from '../../data/classes';
-import { C } from '../../data/constants';
+import { C, FLAGS } from '../../data/constants';
 import { GUNS, type GunId } from '../../data/weapons';
+import { LANCE_SPEED } from './weapons';
 import { BTN, type PlayerState } from '../types';
 import type { GameSim } from '../sim';
 
@@ -266,7 +267,10 @@ function act(sim: GameSim, p: PlayerState, m: BotMind, dt: number): void {
     desired = angleTo(p.x, p.y, m.throwX, m.throwY);
     aimD = m.throwDist;
   } else if (visible && t) {
-    const lead = gun.projectileSpeed > 0 ? (td / gun.projectileSpeed) * 0.6 : 0;
+    // Flag-ON, the Lance is a 110u/s rail, so bots lead it; flag-OFF it stays
+    // hitscan (projectileSpeed:0 → no lead), keeping the OFF path byte-identical.
+    const speed = (FLAGS.PROJECTILE_LANCE && gun.id === 'lance') ? LANCE_SPEED : gun.projectileSpeed;
+    const lead = speed > 0 ? (td / speed) * 0.6 : 0;
     desired = angleTo(p.x, p.y, t.x + t.vx * lead, t.y + t.vy * lead) + m.aimNoise;
     aimD = td;
   } else if (Math.hypot(mx, my) > 0.1) {
