@@ -76,6 +76,8 @@ export const C = {
   MAX_PROJECTILES: 256,
   /** Global concurrent WebAudio voice ceiling (S5.7c). */
   AUDIO_MAX_VOICES: 24,
+  /** Per-gun min inter-shot interval (ms): drop a non-local 'shot' voice if the same gun fired more recently (S5.7c). */
+  AUDIO_GUN_MIN_INTERVAL_MS: 25,
 } as const;
 
 /**

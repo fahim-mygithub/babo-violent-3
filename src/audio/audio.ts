@@ -18,6 +18,10 @@ export class AudioEngine {
   private voicesThisBatch = 0;
   private heartPhase = 0;
   private sizzleAt = 0;
+  /** Global concurrent voice count; inc on source start, dec on its onended. */
+  private activeVoices = 0;
+  /** Last time (performance.now() ms) each gun produced a 'shot' voice. */
+  private lastGunAt: Partial<Record<GunId, number>> = {};
 
   /**
    * Call from the FIRST user gesture to unlock WebAudio (iOS Safari requires a
@@ -70,6 +74,18 @@ export class AudioEngine {
   // Voices
   // -------------------------------------------------------------------------
 
+  /** Global voice budget: false once the concurrent ceiling is reached. */
+  private canVoice(): boolean { return this.activeVoices < C.AUDIO_MAX_VOICES; }
+
+  /** True if `gun` produced a 'shot' voice within the per-gun min interval. */
+  private gunThrottled(gun: GunId, now: number): boolean {
+    const t = this.lastGunAt[gun];
+    return t !== undefined && now - t < C.AUDIO_GUN_MIN_INTERVAL_MS;
+  }
+
+  /** Record the time `gun` last produced a 'shot' voice. */
+  private noteGun(gun: GunId, now: number): void { this.lastGunAt[gun] = now; }
+
   /** Filtered noise burst with a gain envelope and optional filter sweep. */
   private noise(opts: {
     dur: number; gain: number;
@@ -78,10 +94,13 @@ export class AudioEngine {
   }): void {
     const ctx = this.ctx;
     if (!ctx || !this.master || !this.noiseBuf) return;
+    if (!this.canVoice()) return; // global voice budget exhausted
     const t0 = ctx.currentTime + (opts.delay ?? 0);
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.loop = true;
+    this.activeVoices++;
+    src.onended = () => { this.activeVoices--; };
     const filt = ctx.createBiquadFilter();
     filt.type = opts.type ?? 'lowpass';
     filt.frequency.setValueAtTime(opts.f0 ?? 1000, t0);
@@ -104,9 +123,12 @@ export class AudioEngine {
   }): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
+    if (!this.canVoice()) return; // global voice budget exhausted
     const t0 = ctx.currentTime + (opts.delay ?? 0);
     const osc = ctx.createOscillator();
     osc.type = opts.type;
+    this.activeVoices++;
+    osc.onended = () => { this.activeVoices--; };
     osc.frequency.setValueAtTime(Math.max(20, opts.f0), t0);
     if (opts.f1 !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(20, opts.f1), t0 + opts.dur);
     if (opts.detune) osc.detune.value = opts.detune;
@@ -174,6 +196,11 @@ export class AudioEngine {
         case 'shot': {
           const v = vol(ev.x, ev.y, ev.player === localId);
           if (v < 0.05) break;
+          if (ev.player !== localId) {
+            const now = performance.now();
+            if (this.gunThrottled(ev.gun, now)) break; // same non-local gun fired too recently
+            this.noteGun(ev.gun, now);
+          }
           this.voicesThisBatch++;
           this.gunShot(ev.gun, v);
           break;
