@@ -77,3 +77,16 @@ export const C = {
   /** Global concurrent WebAudio voice ceiling (S5.7c). */
   AUDIO_MAX_VOICES: 24,
 } as const;
+
+/**
+ * Sim feature flags. Imported by the sim AND tests (stays headless/deterministic
+ * — NOT window.__bv3). MUST be identical on host + all clients (build/match
+ * constant). Flag-ON and flag-OFF are DIFFERENT RNG streams once S2 routes the
+ * Lance through fireProjectiles (S2.8), so each gets its own golden baseline.
+ */
+export const FLAGS = {
+  /** false → exact legacy hitscan fireLance + old 'rail' event (desktop default). */
+  PROJECTILE_LANCE: false,
+  /** Per-tick projectile cap (mirrors C.MAX_PROJECTILES); applies to all guns (S2.7). */
+  MAX_PROJECTILES: C.MAX_PROJECTILES,
+} as const;

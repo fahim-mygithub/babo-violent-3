@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { C } from '../src/data/constants';
+import { C, FLAGS } from '../src/data/constants';
 import { makeSim, run, simHash } from './helpers';
 
 describe('inert sim-flag scaffolding (constants.ts)', () => {
@@ -21,4 +21,20 @@ describe('inert sim-flag scaffolding (constants.ts)', () => {
     run(a, 300); run(b, 300);
     expect(simHash(a)).toBe(simHash(b));
   }, 60_000);
+});
+
+describe('FLAGS block (constants.ts)', () => {
+  it('PROJECTILE_LANCE defaults OFF (legacy hitscan reproduces desktop)', () => {
+    expect(FLAGS.PROJECTILE_LANCE).toBe(false);
+  });
+
+  it('mirrors MAX_PROJECTILES for the S2 fire path', () => {
+    expect(FLAGS.MAX_PROJECTILES).toBe(256);
+    expect(FLAGS.MAX_PROJECTILES).toBe(C.MAX_PROJECTILES);
+  });
+
+  it('is a const-asserted object (compile-time-like branch source)', () => {
+    expect(typeof FLAGS).toBe('object');
+    expect(Object.keys(FLAGS).sort()).toEqual(['MAX_PROJECTILES', 'PROJECTILE_LANCE']);
+  });
 });
