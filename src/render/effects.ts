@@ -2,7 +2,16 @@ import { AdditiveBlending, Blending, BoxGeometry, CircleGeometry, ConeGeometry, 
 import { C } from '../data/constants';
 import { GUNS } from '../data/weapons';
 import { EQUIPMENT } from '../data/equipment';
-import { surfaceMat } from './quality';
+import { QUALITY, surfaceMat } from './quality';
+
+/**
+ * Scale a transient particle-burst count by the live quality tier, never below 1
+ * so gameplay-readable bursts (hit / hitWall) always show at least one particle.
+ * High → particleScale 1 → today's literal count. Render-side `Math.random()` and
+ * these counts never touch the sim, so determinism is unaffected.
+ */
+export const scaledBurstCount = (n: number): number =>
+  Math.max(1, Math.round(n * QUALITY.particleScale));
 import type {
   BloodPool, FireZone, GameEvent, Grenade, Pickup, PlayerState, Projectile, SmokeZone,
 } from '../sim/types';
@@ -180,9 +189,10 @@ export class EffectsLayer {
     this.syncSet(fires, this.fireGroups as Map<number, Object3D>,
       (f) => {
         const g = new Group();
-        for (let i = 0; i < 7; i++) {
+        const fc = QUALITY.fireSprites; // flicker-sprite count (tiered; high = 7)
+        for (let i = 0; i < fc; i++) {
           const s = this.makeSprite(i % 2 ? 0xff6a10 : 0xffc040, 1, AdditiveBlending);
-          const a = (i / 7) * Math.PI * 2;
+          const a = (i / fc) * Math.PI * 2;
           s.position.set(Math.cos(a) * f.r * 0.55, 0.3, Math.sin(a) * f.r * 0.55);
           g.add(s);
         }
@@ -193,8 +203,10 @@ export class EffectsLayer {
       },
       (f, obj) => {
         obj.position.set(f.x, 0, f.y);
+        // All children but the last are flicker sprites; the final child is the base.
+        const flickers = obj.children.length - 1;
         obj.children.forEach((child, i) => {
-          if (i < 7) {
+          if (i < flickers) {
             const flick = 0.7 + 0.5 * Math.sin(time * (9 + i * 1.7) + i * 2.4);
             child.scale.setScalar((0.6 + 0.5 * flick) * Math.min(1, f.ttl));
             child.position.y = 0.3 + 0.18 * Math.sin(time * 7 + i * 1.9);
@@ -207,9 +219,10 @@ export class EffectsLayer {
     this.syncSet(smokes, this.smokeGroups as Map<number, Object3D>,
       (s) => {
         const g = new Group();
-        for (let i = 0; i < 6; i++) {
+        const sc = QUALITY.smokeSprites; // puff count (tiered; high = 6)
+        for (let i = 0; i < sc; i++) {
           const sp = this.makeSprite(0x8a929a, s.r * 1.3, NormalBlending, 0.85);
-          const a = (i / 6) * Math.PI * 2;
+          const a = (i / sc) * Math.PI * 2;
           sp.position.set(Math.cos(a) * s.r * 0.45, 0.5 + (i % 3) * 0.35, Math.sin(a) * s.r * 0.45);
           g.add(sp);
         }
@@ -466,7 +479,7 @@ export class EffectsLayer {
   }
 
   private getPooledSprite(color: number, scale: number, additive: boolean, opacity: number): Sprite | null {
-    if (this.particles.length > 600) return null; // hard cap — drop excess juice
+    if (this.particles.length > QUALITY.particleCap) return null; // tier hard cap — drop excess juice
     const s = this.spritePool.pop() ?? new Sprite(new SpriteMaterial({
       map: this.glowTex, transparent: true, depthWrite: false,
     }));
@@ -484,7 +497,8 @@ export class EffectsLayer {
     x: number, y: number, h: number, count: number, speed: number,
     color: number, life: number, gravity: boolean, baseScale = 0.3,
   ): void {
-    for (let i = 0; i < count; i++) {
+    const n = scaledBurstCount(count); // tier-scaled, ≥1
+    for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = speed * (0.4 + Math.random() * 0.8);
       const obj = this.getPooledSprite(color, baseScale, gravity, 0.95);

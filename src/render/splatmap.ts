@@ -1,6 +1,7 @@
 import { Mesh, MeshBasicMaterial, OrthographicCamera, PlaneGeometry, RGBAFormat, Scene, Texture, WebGLRenderTarget, WebGLRenderer } from 'three';
 import type { MapDef } from '../data/maps';
 import { makeSplatTextures, makeSprayTexture } from './textures';
+import { QUALITY } from './quality';
 
 /**
  * The visual blood layer: every splat is stamped once into a persistent
@@ -21,7 +22,9 @@ export class SplatMap {
   private firstStamp = true;
 
   constructor(private mapW: number, private mapH: number) {
-    this.rt = new WebGLRenderTarget(2048, 2048, {
+    // Persistent gore target: 2048 on high (today's literal), 1024 on mobile.
+    const rtSize = QUALITY.splatRtSize;
+    this.rt = new WebGLRenderTarget(rtSize, rtSize, {
       format: RGBAFormat,
       depthBuffer: false,
       stencilBuffer: false,
