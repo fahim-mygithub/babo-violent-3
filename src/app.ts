@@ -60,6 +60,8 @@ export class App {
   private endTimer = -1;
   private escAt = 0;
   private lastSettings: MatchSettings | null = null;
+  // Screen Wake Lock sentinel; null when unheld (auto-released on hide → re-acquired).
+  private wakeLock: { release?: () => Promise<void> } | null = null;
 
   constructor(private container: HTMLElement) {
     (window as unknown as { __bv3: App }).__bv3 = this; // debug/test handle
@@ -80,6 +82,7 @@ export class App {
       for (const ev of unlockEvents) window.removeEventListener(ev, unlock);
     };
     for (const ev of unlockEvents) window.addEventListener(ev, unlock);
+    document.addEventListener('visibilitychange', this.onVisibility);
   }
 
   start(): void {
@@ -445,6 +448,7 @@ export class App {
     this.fx = new ScreenFx(this.container);
     this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt));
     this.loop.start();
+    void this.acquireWakeLock();
   }
 
   private view(): WorldView | null {
@@ -563,6 +567,34 @@ export class App {
 
   // ---------------------------------------------------------------------------
 
+  /**
+   * Hidden tab → suspend audio ONLY (the FixedLoop keeps ticking so a host stays
+   * authoritative). Foreground → re-arm audio and re-acquire the wake lock (it
+   * auto-releases when hidden).
+   */
+  private onVisibility = (): void => {
+    if (document.hidden) {
+      this.audio.suspend();
+    } else {
+      this.audio.resumeIfUnlocked();
+      void this.acquireWakeLock();
+    }
+  };
+
+  /** Keep the screen awake during a match. Feature-detected + try/catch (iOS<16.4 degrades silently). */
+  private async acquireWakeLock(): Promise<void> {
+    if (!this.loop) return; // only during a match
+    const navigator = window.navigator as Navigator & { wakeLock?: { request(type: 'screen'): Promise<{ release?: () => Promise<void> }> } };
+    try {
+      if (navigator.wakeLock) this.wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* unsupported or denied — the screen may dim; harmless */ }
+  }
+
+  private releaseWakeLock(): void {
+    void this.wakeLock?.release?.();
+    this.wakeLock = null;
+  }
+
   private onGlobalKey = (e: KeyboardEvent): void => {
     if (e.code === 'Escape' && this.loop) {
       const now = performance.now();
@@ -577,6 +609,7 @@ export class App {
   };
 
   private teardownMatch(): void {
+    this.releaseWakeLock();
     this.loop?.stop();
     this.loop = null;
     this.renderer?.dispose();
