@@ -1,7 +1,7 @@
 import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Material, Mesh, Object3D, OctahedronGeometry, SphereGeometry, TorusGeometry } from 'three';
 import type { ClassId } from '../data/classes';
 import { CLASSES } from '../data/classes';
-import { surfaceMat } from './quality';
+import { QUALITY, surfaceMat } from './quality';
 
 /**
  * Per-class visual identity ACCESSORIES for the faceless Babo marble.
@@ -269,12 +269,8 @@ function buildTrapper(color: number, r: number): ClassVisual {
 
 // --- Public API ------------------------------------------------------------
 
-/**
- * Build the per-class accessory set for a Babo. The body sphere itself (radius
- * `radius`, default 0.5) is owned by the caller and untouched; `bodyScale` is a
- * cosmetic-only hint the caller may apply to the visual mesh.
- */
-export function buildClassVisual(classId: ClassId, radius = 0.5): ClassVisual {
+/** Assemble a fresh class accessory set from the per-class primitive builder. */
+function assembleClassVisual(classId: ClassId, radius: number): ClassVisual {
   const color = CLASSES[classId].color;
   let v: ClassVisual;
   switch (classId) {
@@ -299,26 +295,103 @@ export function buildClassVisual(classId: ClassId, radius = 0.5): ClassVisual {
   return v;
 }
 
-/** Recursively dispose every geometry + material under an accessory object. */
+// ---------------------------------------------------------------------------
+// Per-ClassId template cache (S3.5d) — GATED to low/mid via QUALITY.mergeStatics.
+//
+// Mirrors the gun cache: on low/mid buildClassVisual returns clones of a cached
+// template's accessory objects (cloning shares geometry + material refs in
+// three.js), the cache-owned resources are tracked in a module WeakSet, and the
+// per-instance disposeClassVisual SKIPS them so a despawn never frees geo a
+// future respawn reuses. disposeClassCache frees the templates at teardown only.
+// On high, mergeStatics is false → the proven per-instance path is unchanged.
+// ---------------------------------------------------------------------------
+
+interface ClassTemplate { radius: number; visual: ClassVisual; }
+const classCache = new Map<ClassId, ClassTemplate>();
+const classCacheOwned = new WeakSet<object>();
+
+function markClassCached(visual: ClassVisual): void {
+  const mark = (obj: Object3D): void => obj.traverse((child) => {
+    const mesh = child as Partial<Mesh>;
+    if (mesh.geometry) classCacheOwned.add(mesh.geometry);
+    const mat = mesh.material;
+    if (Array.isArray(mat)) for (const m of mat) classCacheOwned.add(m);
+    else if (mat) classCacheOwned.add(mat);
+  });
+  for (const o of visual.roll) mark(o);
+  for (const o of visual.upright) mark(o);
+}
+
+/**
+ * Build the per-class accessory set for a Babo. The body sphere itself (radius
+ * `radius`, default 0.5) is owned by the caller and untouched; `bodyScale` is a
+ * cosmetic-only hint the caller may apply to the visual mesh.
+ *
+ * On low/mid (mergeStatics) returns clones of a cached template that share the
+ * class's geometry + materials; on high builds a fresh standalone set.
+ */
+export function buildClassVisual(classId: ClassId, radius = 0.5): ClassVisual {
+  if (!QUALITY.mergeStatics) return assembleClassVisual(classId, radius);
+  let tpl = classCache.get(classId);
+  // A different radius can't reuse the cached geometry — fall back to fresh.
+  if (tpl && tpl.radius !== radius) return assembleClassVisual(classId, radius);
+  if (!tpl) {
+    const visual = assembleClassVisual(classId, radius);
+    markClassCached(visual);
+    tpl = { radius, visual };
+    classCache.set(classId, tpl);
+  }
+  // Clone the accessory objects: Object3D.clone() shares geometry + material refs
+  // with the template (and every sibling clone); the cache-owned guard protects
+  // them on dispose. The animate closure operates on whatever array it's handed.
+  return {
+    bodyScale: tpl.visual.bodyScale,
+    roll: tpl.visual.roll.map((o) => o.clone()),
+    upright: tpl.visual.upright.map((o) => o.clone()),
+    animate: tpl.visual.animate,
+  };
+}
+
+/** Recursively dispose every geometry + material under an accessory object,
+ *  SKIPPING resources owned by the template cache. */
 function disposeObject(obj: Object3D): void {
   obj.traverse((child) => {
     const mesh = child as Partial<Mesh>;
-    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.geometry && !classCacheOwned.has(mesh.geometry)) mesh.geometry.dispose();
     const mat = mesh.material;
     if (mat) {
       if (Array.isArray(mat)) {
-        for (const m of mat) m.dispose();
-      } else {
+        for (const m of mat) if (!classCacheOwned.has(m)) m.dispose();
+      } else if (!classCacheOwned.has(mat)) {
         mat.dispose();
       }
     }
   });
 }
 
-/** Dispose all accessory geometry + materials held by a ClassVisual. */
+/** Dispose all accessory geometry + materials held by a ClassVisual (cache-skipping). */
 export function disposeClassVisual(v: ClassVisual): void {
   for (const o of v.roll) disposeObject(o);
   for (const o of v.upright) disposeObject(o);
   v.roll.length = 0;
   v.upright.length = 0;
+}
+
+/**
+ * Free every cached class template's geometry + materials (bypassing the guard)
+ * and clear the cache. Call ONLY at pool/app teardown — never per babo.
+ */
+export function disposeClassCache(): void {
+  const free = (obj: Object3D): void => obj.traverse((child) => {
+    const mesh = child as Partial<Mesh>;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = mesh.material;
+    if (Array.isArray(mat)) for (const m of mat) m.dispose();
+    else if (mat) mat.dispose();
+  });
+  for (const tpl of classCache.values()) {
+    for (const o of tpl.visual.roll) free(o);
+    for (const o of tpl.visual.upright) free(o);
+  }
+  classCache.clear();
 }

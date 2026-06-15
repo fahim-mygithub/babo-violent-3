@@ -4,8 +4,8 @@ import { CLASSES } from '../data/classes';
 import type { GunId } from '../data/weapons';
 import type { PlayerState } from '../sim/types';
 import { makeBaboMaterial } from './baboShader';
-import { buildGunModel, disposeGunModel } from './gunModels';
-import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboShapes';
+import { buildGunModel, disposeGunModel, disposeGunCache } from './gunModels';
+import { buildClassVisual, disposeClassVisual, disposeClassCache, type ClassVisual } from './baboShapes';
 
 /**
  * Diegetic-health Babo: the sphere visibly fills with blood as it takes
@@ -318,5 +318,9 @@ export class BaboPool {
     this.sphereGeo.dispose();
     this.scene.remove(this.shadows.mesh);
     this.shadows.dispose();
+    // Free the low/mid template caches now that no babo references them (no-op on
+    // high, where the caches were never populated).
+    disposeGunCache();
+    disposeClassCache();
   }
 }

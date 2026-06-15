@@ -1,7 +1,7 @@
 import { BoxGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, Object3D, SphereGeometry, TorusGeometry } from 'three';
 import type { GunId } from '../data/weapons';
 import { GUNS } from '../data/weapons';
-import { surfaceMat } from './quality';
+import { QUALITY, surfaceMat } from './quality';
 
 /**
  * Low-poly held-weapon models + lobby selector icons, built entirely from
@@ -295,11 +295,8 @@ const BUILDERS: Record<GunId, (accent: number) => Object3D[]> = {
   pyre: buildPyre,
 };
 
-/**
- * Build the distinctive low-poly model for a gun. Barrel points along +X; the
- * group origin is at the grip/mount, ready to parent to the babo aim mount.
- */
-export function buildGunModel(gunId: GunId): Group {
+/** Assemble a fresh gun model group from the per-gun primitive builder. */
+function assembleGunModel(gunId: GunId): Group {
   const group = new Group();
   group.name = `gun:${gunId}`;
   const accent = GUNS[gunId].color;
@@ -308,19 +305,85 @@ export function buildGunModel(gunId: GunId): Group {
 }
 
 // ---------------------------------------------------------------------------
+// Per-GunId template cache (S3.5c) — GATED to low/mid via QUALITY.mergeStatics.
+//
+// On low/mid, buildGunModel returns a `template.clone()`: three.js shares the
+// underlying geometry + material refs across clones, so all held models for a
+// gun reuse ONE set of geos/mats. The cache-owned resources are tracked in a
+// module WeakSet; per-instance disposeGunModel SKIPS anything in that set so a
+// despawning babo never frees geometry another babo (or a future respawn) still
+// uses. The cache itself is freed only at pool/app teardown via disposeGunCache.
+// On high, mergeStatics is false → the proven per-instance path is unchanged.
+// ---------------------------------------------------------------------------
+
+const gunCache = new Map<GunId, Group>();
+const cacheOwned = new WeakSet<object>();
+
+/** Mark every geometry + material under `group` as cache-owned (disposal-guarded). */
+function markCached(group: Group): void {
+  group.traverse((obj) => {
+    const mesh = obj as Partial<Mesh>;
+    if (mesh.geometry) cacheOwned.add(mesh.geometry);
+    const mat = (mesh as Mesh).material;
+    if (Array.isArray(mat)) for (const m of mat) cacheOwned.add(m);
+    else if (mat) cacheOwned.add(mat);
+  });
+}
+
+/**
+ * Build the distinctive low-poly model for a gun. Barrel points along +X; the
+ * group origin is at the grip/mount, ready to parent to the babo aim mount.
+ *
+ * On low/mid (mergeStatics) returns a clone of a cached template that shares the
+ * gun's geometry + materials; on high builds a fresh standalone model.
+ */
+export function buildGunModel(gunId: GunId): Group {
+  if (!QUALITY.mergeStatics) return assembleGunModel(gunId);
+  let template = gunCache.get(gunId);
+  if (!template) {
+    template = assembleGunModel(gunId);
+    markCached(template);
+    gunCache.set(gunId, template);
+  }
+  // Group.clone() shares geometry + material refs with the template (and so with
+  // every sibling clone) — the cache-owned guard protects them on dispose.
+  return template.clone();
+}
+
+// ---------------------------------------------------------------------------
 // Disposal
 // ---------------------------------------------------------------------------
 
-/** Recursively dispose every geometry + material of a buildGunModel() group. */
+/**
+ * Recursively dispose a buildGunModel() group's geometry + materials, SKIPPING
+ * any resource owned by the template cache (so a despawn never frees shared geo).
+ */
 export function disposeGunModel(group: Group): void {
   group.traverse((obj) => {
     const mesh = obj as Partial<Mesh>;
-    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.geometry && !cacheOwned.has(mesh.geometry)) mesh.geometry.dispose();
     const mat = (mesh as Mesh).material;
     if (Array.isArray(mat)) {
-      for (const m of mat) m.dispose();
-    } else if (mat) {
+      for (const m of mat) if (!cacheOwned.has(m)) m.dispose();
+    } else if (mat && !cacheOwned.has(mat)) {
       mat.dispose();
     }
   });
+}
+
+/**
+ * Free every cached gun template's geometry + materials (bypassing the per-instance
+ * guard) and clear the cache. Call ONLY at pool/app teardown — never per babo.
+ */
+export function disposeGunCache(): void {
+  for (const template of gunCache.values()) {
+    template.traverse((obj) => {
+      const mesh = obj as Partial<Mesh>;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = (mesh as Mesh).material;
+      if (Array.isArray(mat)) for (const m of mat) m.dispose();
+      else if (mat) mat.dispose();
+    });
+  }
+  gunCache.clear();
 }

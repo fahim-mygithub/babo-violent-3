@@ -8,6 +8,7 @@ import type { BloodPool, FireZone, Grenade, Pickup, Projectile, SmokeZone } from
 import { BaboPool } from './babos';
 import { EffectsLayer } from './effects';
 import { laserLength } from './aimLaser';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { QUALITY, surfaceMat } from './quality';
 import { SplatMap } from './splatmap';
 import { makeFloorTexture, makeWallTexture } from './textures';
@@ -55,6 +56,8 @@ export class GameRenderer {
   private splat: SplatMap;
   private babos: BaboPool;
   private effects: EffectsLayer;
+  // Merged static wall geometry (low/mid mergeStatics path); null on high.
+  private wallGeo: BufferGeometry | null = null;
 
   private camTarget = new Vector3();
   private shake = 0;
@@ -153,16 +156,34 @@ export class GameRenderer {
       this.scene.add(rim);
     }
 
-    // Walls
+    // Walls. The 6-group material layout per box keeps the side faces (wallMat)
+    // distinct from the top/bottom caps (topMat). On low/mid (mergeStatics) the
+    // 18-ish boxes collapse into ONE merged geometry → 2 draw calls instead of N;
+    // on high (desktop byte-identical) the proven per-wall meshes stay.
     const wallTex = makeWallTexture();
     const wallMat = surfaceMat({ map: wallTex, roughness: 0.7, metalness: 0.25 });
     const topMat = surfaceMat({ color: 0x2c3138, roughness: 0.8 });
-    for (const wall of this.map.walls) {
-      const geo = new BoxGeometry(wall.w, wall.height, wall.h);
-      const mats = [wallMat, wallMat, topMat, topMat, wallMat, wallMat];
-      const mesh = new Mesh(geo, mats);
-      mesh.position.set(wall.x, wall.height / 2, wall.y);
-      this.scene.add(mesh);
+    if (QUALITY.mergeStatics) {
+      const boxes: BufferGeometry[] = [];
+      for (const wall of this.map.walls) {
+        const geo = new BoxGeometry(wall.w, wall.height, wall.h);
+        geo.translate(wall.x, wall.height / 2, wall.y); // bake world position in
+        boxes.push(geo);
+      }
+      const merged = mergeWalls(boxes); // disposes the source boxes internally
+      if (merged) {
+        this.wallGeo = merged;
+        // 2-group layout: side faces → wallMat, top/bottom caps → topMat.
+        this.scene.add(new Mesh(merged, [wallMat, topMat]));
+      }
+    } else {
+      const wallMats = [wallMat, wallMat, topMat, topMat, wallMat, wallMat];
+      for (const wall of this.map.walls) {
+        const geo = new BoxGeometry(wall.w, wall.height, wall.h);
+        const mesh = new Mesh(geo, wallMats);
+        mesh.position.set(wall.x, wall.height / 2, wall.y);
+        this.scene.add(mesh);
+      }
     }
 
     // Equipment node pads
@@ -353,10 +374,41 @@ export class GameRenderer {
       this.reticle.geometry.dispose();
       (this.reticle.material as MeshBasicMaterial).dispose();
     }
+    this.wallGeo?.dispose();
+    this.wallGeo = null;
     this.splat.dispose();
     this.babos.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss(); // release the GL context now, don't wait for GC
     this.canvas.remove();
   }
+}
+
+/**
+ * Merge wall boxes (already translated to world position) into ONE geometry with
+ * a 2-group layout: side faces → material 0 (wallMat), top/bottom caps → material 1
+ * (topMat). Returns null for an empty input.
+ *
+ * `mergeGeometries(boxes, true)` would collapse each box into a single group keyed
+ * by array index — wrong for our per-face split — so we flat-merge (no groups) and
+ * rebuild the groups by hand. BoxGeometry emits face-pairs in order
+ * [+X,-X,+Y,-Y,+Z,-Z], 6 indices each (36 per box): {+X,-X,+Z,-Z}=sides, {+Y,-Y}=caps.
+ */
+export function mergeWalls(boxes: BufferGeometry[]): BufferGeometry | null {
+  if (boxes.length === 0) return null;
+  const merged = mergeGeometries(boxes, false);
+  // The source boxes are baked into `merged`; free their GPU copies now.
+  for (const b of boxes) b.dispose();
+  if (!merged) return null;
+  merged.clearGroups();
+  const PER_FACE = 6; // indices per box face-pair
+  const PER_BOX = PER_FACE * 6; // 36 indices per box
+  for (let k = 0; k < boxes.length; k++) {
+    const base = k * PER_BOX;
+    // sides = face-pairs 0,1 (+X,-X) and 4,5 (+Z,-Z); caps = face-pairs 2,3 (+Y,-Y).
+    merged.addGroup(base + 0 * PER_FACE, PER_FACE * 2, 0); // +X,-X sides
+    merged.addGroup(base + 2 * PER_FACE, PER_FACE * 2, 1); // +Y,-Y caps
+    merged.addGroup(base + 4 * PER_FACE, PER_FACE * 2, 0); // +Z,-Z sides
+  }
+  return merged;
 }
