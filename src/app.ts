@@ -39,6 +39,27 @@ function defaultScore(mode: ModeId): number {
   return mode === 'tdm' ? C.TDM_FRAG_LIMIT : mode === 'ctf' ? C.CTF_CAP_LIMIT : C.BOUNTY_WIN_SCORE;
 }
 
+/**
+ * Host match-commit ordering. `enter` (= App.enterMatch, whose first act awaits
+ * the render-chunk imports) MUST resolve — renderer + sim live — BEFORE `startMatch`
+ * tells every client to begin. A rejected render-chunk import then never commits
+ * the clients: it skips `startMatch` and runs `failToLobby` recovery instead, so
+ * no client is stranded in a started match the host failed to enter.
+ */
+export async function commitHostMatch(
+  enter: () => Promise<void>,
+  startMatch: () => void,
+  failToLobby: () => void,
+): Promise<void> {
+  try {
+    await enter();
+  } catch {
+    failToLobby();
+    return;
+  }
+  startMatch();
+}
+
 export class App {
   private ui: UI;
   private kbm = new InputManager();
@@ -450,8 +471,15 @@ export class App {
     }
     this.addBots(sim, settings.botCount, settings.mode, teamCursor);
     this.sim = sim;
-    host.startMatch(assignments);
-    await this.enterMatch(settings.mapId);
+    // Bring the renderer/sim live (enterMatch awaits the render-chunk imports)
+    // BEFORE telling clients to start — a rejected import then never strands a
+    // client in a started match the host failed to enter (commitHostMatch skips
+    // startMatch and falls back to the lobby instead).
+    await commitHostMatch(
+      () => this.enterMatch(settings.mapId),
+      () => host.startMatch(assignments),
+      () => this.failToLobby(),
+    );
   }
 
   // CLIENT path: never loads a sim and never imports Rapier — it renders the
