@@ -263,6 +263,10 @@ export class ClientSession {
       const k = Math.min(1, 12 * dt);
       this.rendered.x += (this.pred.x - this.rendered.x) * k;
       this.rendered.y += (this.pred.y - this.rendered.y) * k;
+      // The view memo bakes `rendered` into the local player's position; the lerp
+      // just moved it, so invalidate the cache or two reads bracketing this update
+      // in the same rounded-ms bucket would report a stale local position.
+      this.viewDirty = true;
     }
   }
 

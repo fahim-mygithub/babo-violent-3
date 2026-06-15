@@ -89,6 +89,26 @@ describe('client.view memoization', () => {
     expect([...v2.players].map((p) => p.id)).toEqual([0]);
   });
 
+  it('an update() between two reads in the same ms bucket reflects the moved local position', () => {
+    const c = new ClientSession();
+    feed(c, { t: 'start', settings: { mode: 'tdm', mapId: 'grinder', scoreLimit: 50, botCount: 0, seed: 42 }, yourId: 0 });
+    // Two snaps so prediction is valid AND rendered != pred (rendered snapped to
+    // the FIRST valid snap; the second only moves pred), so update()'s lerp toward
+    // pred actually moves the rendered local position.
+    now = 10_000; feed(c, { t: 'snap', snap: snap(0, 4, 5) });
+    now = 10_050; feed(c, { t: 'snap', snap: snap(3, 60, 70) });
+    now = 10_200;
+    const localX = (v: { players: Iterable<{ id: number; x: number }> }): number => {
+      for (const p of v.players) if (p.id === 0) return p.x;
+      throw new Error('no local player');
+    };
+    const before = localX(c.view!);
+    c.update(0.016); // per-frame lerp toward prediction
+    const after = localX(c.view!); // SAME ms bucket → must NOT be a stale cache hit
+    expect(after).not.toBe(before);
+    expect(after).toBeGreaterThan(before); // moved toward pred (60)
+  });
+
   it('predictedSelf returns the predictor own-babo position without building a full view', () => {
     const c = new ClientSession();
     feed(c, { t: 'start', settings: { mode: 'tdm', mapId: 'grinder', scoreLimit: 50, botCount: 0, seed: 42 }, yourId: 0 });
