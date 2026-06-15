@@ -440,19 +440,52 @@ export class LobbyPreview {
     this.stop();
     this.ro?.disconnect();
     this.ro = null;
-    if (this.demo) for (const m of this.demo.meshes) disposeObj(m);
-    if (this.visual) disposeClassVisual(this.visual);
-    if (this.gun) disposeGunModel(this.gun);
-    this.scene.traverse((o) => {
-      const m = o as Mesh;
-      if (m.geometry) m.geometry.dispose();
-      const mat = (m as Mesh).material;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-      else if (mat) (mat as Material).dispose();
+    disposeLobbyScene(this.scene, {
+      gun: this.gun, mount: this.mount, visual: this.visual, body: this.body,
+      uprightHolder: this.uprightHolder, baboRoot: this.baboRoot, demo: this.demo,
     });
     this.renderer.dispose();
     this.renderer.forceContextLoss(); // release the GL context now, don't wait for GC
   }
+}
+
+/** The scene-graph half of LobbyPreview.dispose, split out so it's testable
+ *  without a live WebGLRenderer (the field names match LobbyPreview's privates). */
+interface DisposableLobbyScene {
+  gun: Group | null;
+  mount: Group;
+  visual: ClassVisual | null;
+  body: Mesh;
+  uprightHolder: Group | null;
+  baboRoot: Group;
+  demo?: { meshes: Object3D[] } | null;
+}
+
+/**
+ * Free a lobby-preview scene's resources WITHOUT double-freeing cache-owned
+ * templates. The guarded disposeClassVisual/disposeGunModel skip anything the
+ * low/mid template caches own — but a blanket scene.traverse would then re-dispose
+ * those same shared geometries/materials (they're still parented in the scene).
+ * So detach the gun + class roll/upright objects from the graph FIRST, then let
+ * the traverse free only the remaining lobby-owned resources (lights, disc, ring,
+ * contact shadow, accent ring, body geo + shader material).
+ */
+export function disposeLobbyScene(scene: Scene, p: DisposableLobbyScene): void {
+  if (p.demo) for (const m of p.demo.meshes) disposeObj(m);
+  // Guarded disposers: free per-instance geo/mat, SKIP cache-owned templates.
+  if (p.visual) disposeClassVisual(p.visual);
+  if (p.gun) disposeGunModel(p.gun);
+  // Detach the cache-affected objects so the blanket traverse can't reach them.
+  if (p.gun) p.mount.remove(p.gun);
+  if (p.visual) for (const o of p.visual.roll) p.body.remove(o);
+  if (p.uprightHolder) p.baboRoot.remove(p.uprightHolder);
+  scene.traverse((o) => {
+    const m = o as Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = (m as Mesh).material;
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+    else if (mat) (mat as Material).dispose();
+  });
 }
 
 function ease(x: number): number {
