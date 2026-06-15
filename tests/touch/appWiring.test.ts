@@ -62,3 +62,34 @@ describe('App wiring (source assertion)', () => {
     expect(src).toMatch(/shouldUseTouch\(\)/);
   });
 });
+
+// DESKTOP non-regression (S8.4): with no coarse pointer / no override, the App
+// must stay on the kbm source — touch is never built, the camera scalars stay
+// 1/0/1, the HUD stays mouse-anchored, and the laser is never driven. These are
+// guarded by `this.useTouch` (= shouldUseTouch()) being false on desktop. Lock the
+// detection + the guard so a future edit can't silently flip the desktop path on.
+describe('desktop non-regression', () => {
+  it('shouldUseTouch is false on a desktop matchMedia (no coarse pointer, has hover)', async () => {
+    const { shouldUseTouch } = await import('../../src/touch/touchControls');
+    const orig = (globalThis as { matchMedia?: unknown }).matchMedia;
+    (globalThis as { matchMedia?: unknown }).matchMedia = (q: string) => ({
+      matches: false, media: q, addEventListener() {}, removeEventListener() {},
+    });
+    expect(shouldUseTouch()).toBe(false);
+    if (orig) (globalThis as { matchMedia?: unknown }).matchMedia = orig;
+    else delete (globalThis as { matchMedia?: unknown }).matchMedia;
+  });
+
+  it('every touch-only effect is gated behind useTouch / a non-null touch source', () => {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { resolve } = require('node:path') as typeof import('node:path');
+    const appSrc = readFileSync(resolve(__dirname, '../../src/app.ts'), 'utf8');
+    // The camera scalars are computed from useTouch only — never unconditionally raised.
+    expect(appSrc).toMatch(/aimLeadScale\s*=\s*this\.useTouch\s*\?\s*0\.35\s*:\s*1/);
+    expect(appSrc).toMatch(/camDistScale\s*=\s*\(this\.useTouch && [^)]*\)\s*\?\s*1\.25\s*:\s*1/);
+    // The laser is only driven inside an `if (this.touch)` block (null on desktop).
+    expect(appSrc).toMatch(/if \(this\.touch\) \{[\s\S]*?setAimState/);
+    // hud.touchMode mirrors useTouch (false on desktop → mouse anchor).
+    expect(appSrc).toMatch(/this\.hud\.touchMode\s*=\s*this\.useTouch/);
+  });
+});
