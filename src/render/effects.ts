@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { AdditiveBlending, Blending, BoxGeometry, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, NormalBlending, Object3D, PlaneGeometry, RingGeometry, Scene, SphereGeometry, Sprite, SpriteMaterial } from 'three';
 import { C } from '../data/constants';
 import { GUNS } from '../data/weapons';
 import { EQUIPMENT } from '../data/equipment';
@@ -11,7 +11,7 @@ import { makeGlowTexture } from './textures';
 const BH = C.BABO_RADIUS; // babo height / default fx height
 
 interface Particle {
-  obj: THREE.Sprite | THREE.Mesh;
+  obj: Sprite | Mesh;
   vx: number; vy: number; vz: number; // sim x, height, sim y
   life: number;
   maxLife: number;
@@ -25,41 +25,41 @@ interface Particle {
 export class EffectsLayer {
   private glowTex = makeGlowTexture();
 
-  private projMeshes = new Map<number, THREE.Object3D>();
-  private grenMeshes = new Map<number, THREE.Object3D>();
-  private poolMeshes = new Map<number, THREE.Mesh>();
-  private fireGroups = new Map<number, THREE.Group>();
-  private smokeGroups = new Map<number, THREE.Group>();
-  private pickupGroups = new Map<number, THREE.Group>();
-  private flagGroups: THREE.Group[] = [];
-  private grappleLines = new Map<number, THREE.Mesh>();
-  private wellRings: { obj: THREE.Group; ttl: number }[] = [];
-  private beams: { obj: THREE.Mesh; ttl: number; maxTtl: number }[] = [];
+  private projMeshes = new Map<number, Object3D>();
+  private grenMeshes = new Map<number, Object3D>();
+  private poolMeshes = new Map<number, Mesh>();
+  private fireGroups = new Map<number, Group>();
+  private smokeGroups = new Map<number, Group>();
+  private pickupGroups = new Map<number, Group>();
+  private flagGroups: Group[] = [];
+  private grappleLines = new Map<number, Mesh>();
+  private wellRings: { obj: Group; ttl: number }[] = [];
+  private beams: { obj: Mesh; ttl: number; maxTtl: number }[] = [];
   private particles: Particle[] = [];
-  private spritePool: THREE.Sprite[] = [];
+  private spritePool: Sprite[] = [];
 
-  private arcDots: THREE.Mesh[] = [];
-  private arcLanding: THREE.Mesh;
+  private arcDots: Mesh[] = [];
+  private arcLanding: Mesh;
 
-  private poolGeo = new THREE.CircleGeometry(1, 26);
-  private bulletGeo = new THREE.SphereGeometry(0.09, 8, 6);
-  private rocketGeo = new THREE.ConeGeometry(0.16, 0.5, 8);
-  private grenadeGeo = new THREE.SphereGeometry(0.16, 10, 8);
+  private poolGeo = new CircleGeometry(1, 26);
+  private bulletGeo = new SphereGeometry(0.09, 8, 6);
+  private rocketGeo = new ConeGeometry(0.16, 0.5, 8);
+  private grenadeGeo = new SphereGeometry(0.16, 10, 8);
 
-  constructor(private scene: THREE.Scene) {
-    const landGeo = new THREE.RingGeometry(0.3, 0.42, 24);
-    this.arcLanding = new THREE.Mesh(
+  constructor(private scene: Scene) {
+    const landGeo = new RingGeometry(0.3, 0.42, 24);
+    this.arcLanding = new Mesh(
       landGeo,
-      new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+      new MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0.85, side: DoubleSide }),
     );
     this.arcLanding.rotation.x = -Math.PI / 2;
     this.arcLanding.visible = false;
     this.arcLanding.position.y = 0.04;
     scene.add(this.arcLanding);
     for (let i = 0; i < 12; i++) {
-      const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.06, 6, 4),
-        new THREE.MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0.8 }),
+      const dot = new Mesh(
+        new SphereGeometry(0.06, 6, 4),
+        new MeshBasicMaterial({ color: 0xffd060, transparent: true, opacity: 0.8 }),
       );
       dot.visible = false;
       scene.add(dot);
@@ -89,8 +89,8 @@ export class EffectsLayer {
   }
 
   private syncSet<T extends { id: number }>(
-    items: T[], map: Map<number, THREE.Object3D>,
-    create: (item: T) => THREE.Object3D, update: (item: T, obj: THREE.Object3D) => void,
+    items: T[], map: Map<number, Object3D>,
+    create: (item: T) => Object3D, update: (item: T, obj: Object3D) => void,
   ): void {
     const seen = new Set<number>();
     for (const item of items) {
@@ -116,18 +116,18 @@ export class EffectsLayer {
       (pr) => {
         const color = GUNS[pr.gun].color;
         if (pr.kind === 'rocket') {
-          const g = new THREE.Group();
-          const m = new THREE.Mesh(this.rocketGeo, new THREE.MeshBasicMaterial({ color: 0xd8d0c8 }));
+          const g = new Group();
+          const m = new Mesh(this.rocketGeo, new MeshBasicMaterial({ color: 0xd8d0c8 }));
           m.rotation.x = Math.PI / 2;
-          const glow = this.makeSprite(0xffa040, 0.8, THREE.AdditiveBlending);
+          const glow = this.makeSprite(0xffa040, 0.8, AdditiveBlending);
           glow.position.z = -0.3;
           g.add(m, glow);
           return g;
         }
         if (pr.kind === 'flame') {
-          return this.makeSprite(0xff8020, 0.55, THREE.AdditiveBlending);
+          return this.makeSprite(0xff8020, 0.55, AdditiveBlending);
         }
-        const mesh = new THREE.Mesh(this.bulletGeo, new THREE.MeshBasicMaterial({ color }));
+        const mesh = new Mesh(this.bulletGeo, new MeshBasicMaterial({ color }));
         mesh.scale.set(2.2, 1, 1); // tracer stretch along travel
         return mesh;
       },
@@ -139,29 +139,29 @@ export class EffectsLayer {
           const t = pr.dist / pr.maxDist;
           const s = 0.35 + t * 1.5;
           obj.scale.set(s, s, s);
-          ((obj as THREE.Sprite).material).opacity = 0.85 * (1 - t * 0.75);
+          ((obj as Sprite).material).opacity = 0.85 * (1 - t * 0.75);
         }
       });
   }
 
   private syncGrenades(grenades: Grenade[], time: number): void {
     this.syncSet(grenades, this.grenMeshes,
-      (gr) => new THREE.Mesh(
+      (gr) => new Mesh(
         this.grenadeGeo,
-        new THREE.MeshStandardMaterial({ color: EQUIPMENT[gr.kind].color, roughness: 0.5 }),
+        new MeshStandardMaterial({ color: EQUIPMENT[gr.kind].color, roughness: 0.5 }),
       ),
       (gr, obj) => {
         obj.position.set(gr.x, 0.16 + gr.z, gr.y);
         // Fuse blink for landed frags
-        const m = (obj as THREE.Mesh).material as THREE.MeshStandardMaterial;
+        const m = (obj as Mesh).material as MeshStandardMaterial;
         m.emissive.setHex(gr.landed && gr.kind === 'frag' && Math.sin(time * 30) > 0 ? 0xff2020 : 0x000000);
       });
   }
 
   private syncPools(pools: BloodPool[]): void {
-    this.syncSet(pools, this.poolMeshes as Map<number, THREE.Object3D>,
+    this.syncSet(pools, this.poolMeshes as Map<number, Object3D>,
       () => {
-        const mesh = new THREE.Mesh(this.poolGeo, new THREE.MeshStandardMaterial({
+        const mesh = new Mesh(this.poolGeo, new MeshStandardMaterial({
           color: 0x4d0408, roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.92,
         }));
         mesh.rotation.x = -Math.PI / 2;
@@ -175,16 +175,16 @@ export class EffectsLayer {
   }
 
   private syncFires(fires: FireZone[], time: number): void {
-    this.syncSet(fires, this.fireGroups as Map<number, THREE.Object3D>,
+    this.syncSet(fires, this.fireGroups as Map<number, Object3D>,
       (f) => {
-        const g = new THREE.Group();
+        const g = new Group();
         for (let i = 0; i < 7; i++) {
-          const s = this.makeSprite(i % 2 ? 0xff6a10 : 0xffc040, 1, THREE.AdditiveBlending);
+          const s = this.makeSprite(i % 2 ? 0xff6a10 : 0xffc040, 1, AdditiveBlending);
           const a = (i / 7) * Math.PI * 2;
           s.position.set(Math.cos(a) * f.r * 0.55, 0.3, Math.sin(a) * f.r * 0.55);
           g.add(s);
         }
-        const base = this.makeSprite(0xff3000, f.r * 2, THREE.AdditiveBlending);
+        const base = this.makeSprite(0xff3000, f.r * 2, AdditiveBlending);
         base.position.y = 0.15;
         g.add(base);
         return g;
@@ -202,11 +202,11 @@ export class EffectsLayer {
   }
 
   private syncSmokes(smokes: SmokeZone[], time: number): void {
-    this.syncSet(smokes, this.smokeGroups as Map<number, THREE.Object3D>,
+    this.syncSet(smokes, this.smokeGroups as Map<number, Object3D>,
       (s) => {
-        const g = new THREE.Group();
+        const g = new Group();
         for (let i = 0; i < 6; i++) {
-          const sp = this.makeSprite(0x8a929a, s.r * 1.3, THREE.NormalBlending, 0.85);
+          const sp = this.makeSprite(0x8a929a, s.r * 1.3, NormalBlending, 0.85);
           const a = (i / 6) * Math.PI * 2;
           sp.position.set(Math.cos(a) * s.r * 0.45, 0.5 + (i % 3) * 0.35, Math.sin(a) * s.r * 0.45);
           g.add(sp);
@@ -218,46 +218,46 @@ export class EffectsLayer {
         obj.rotation.y = time * 0.15;
         const fade = Math.min(1, s.ttl / 1.5);
         obj.children.forEach((child) => {
-          ((child as THREE.Sprite).material).opacity = 0.85 * fade;
+          ((child as Sprite).material).opacity = 0.85 * fade;
         });
       });
   }
 
   private syncPickups(pickups: Pickup[], time: number): void {
-    this.syncSet(pickups, this.pickupGroups as Map<number, THREE.Object3D>,
+    this.syncSet(pickups, this.pickupGroups as Map<number, Object3D>,
       (pk) => {
-        const g = new THREE.Group();
-        let item: THREE.Object3D;
+        const g = new Group();
+        let item: Object3D;
         let ringColor = 0xffffff;
         if (pk.kind === 'gun') {
           ringColor = GUNS[pk.gun!].color;
-          item = new THREE.Mesh(
-            new THREE.BoxGeometry(0.62, 0.16, 0.16),
-            new THREE.MeshStandardMaterial({ color: ringColor, roughness: 0.35, metalness: 0.5, emissive: ringColor, emissiveIntensity: 0.25 }),
+          item = new Mesh(
+            new BoxGeometry(0.62, 0.16, 0.16),
+            new MeshStandardMaterial({ color: ringColor, roughness: 0.35, metalness: 0.5, emissive: ringColor, emissiveIntensity: 0.25 }),
           );
         } else if (pk.kind === 'health') {
           ringColor = 0xff5050;
-          item = new THREE.Group();
-          const box = new THREE.Mesh(
-            new THREE.BoxGeometry(0.4, 0.22, 0.4),
-            new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 }),
+          item = new Group();
+          const box = new Mesh(
+            new BoxGeometry(0.4, 0.22, 0.4),
+            new MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 }),
           );
-          const crossMat = new THREE.MeshBasicMaterial({ color: 0xe03030 });
-          const c1 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.04, 0.1), crossMat);
-          const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.3), crossMat);
+          const crossMat = new MeshBasicMaterial({ color: 0xe03030 });
+          const c1 = new Mesh(new BoxGeometry(0.3, 0.04, 0.1), crossMat);
+          const c2 = new Mesh(new BoxGeometry(0.1, 0.04, 0.3), crossMat);
           c1.position.y = c2.position.y = 0.12;
-          (item as THREE.Group).add(box, c1, c2);
+          (item as Group).add(box, c1, c2);
         } else {
           ringColor = EQUIPMENT[pk.equip!].color;
-          item = new THREE.Mesh(
-            new THREE.SphereGeometry(0.2, 12, 8),
-            new THREE.MeshStandardMaterial({ color: ringColor, roughness: 0.4, emissive: ringColor, emissiveIntensity: 0.3 }),
+          item = new Mesh(
+            new SphereGeometry(0.2, 12, 8),
+            new MeshStandardMaterial({ color: ringColor, roughness: 0.4, emissive: ringColor, emissiveIntensity: 0.3 }),
           );
         }
         item.name = 'item';
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(0.42, 0.52, 22),
-          new THREE.MeshBasicMaterial({ color: ringColor, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
+        const ring = new Mesh(
+          new RingGeometry(0.42, 0.52, 22),
+          new MeshBasicMaterial({ color: ringColor, transparent: true, opacity: 0.5, side: DoubleSide }),
         );
         ring.rotation.x = -Math.PI / 2;
         ring.position.y = 0.03;
@@ -272,7 +272,7 @@ export class EffectsLayer {
           item.position.y = 0.3 + Math.sin(time * 2.4 + pk.id) * 0.08;
           item.rotation.y = time * 1.4;
         }
-        const ring = obj.getObjectByName('ring') as THREE.Mesh | null;
+        const ring = obj.getObjectByName('ring') as Mesh | null;
         if (ring) {
           const pulse = 0.85 + 0.2 * Math.sin(time * 3 + pk.id);
           ring.scale.set(pulse, pulse, 1);
@@ -284,15 +284,15 @@ export class EffectsLayer {
     if (mode.flags.length === 0) return;
     while (this.flagGroups.length < mode.flags.length) {
       const team = this.flagGroups.length;
-      const g = new THREE.Group();
-      const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.05, 1.6),
-        new THREE.MeshStandardMaterial({ color: 0xb0b8c0, metalness: 0.6, roughness: 0.3 }),
+      const g = new Group();
+      const pole = new Mesh(
+        new CylinderGeometry(0.05, 0.05, 1.6),
+        new MeshStandardMaterial({ color: 0xb0b8c0, metalness: 0.6, roughness: 0.3 }),
       );
       pole.position.y = 0.8;
-      const cloth = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.8, 0.5),
-        new THREE.MeshBasicMaterial({ color: team === 0 ? 0x4a8cff : 0xff4a4a, side: THREE.DoubleSide }),
+      const cloth = new Mesh(
+        new PlaneGeometry(0.8, 0.5),
+        new MeshBasicMaterial({ color: team === 0 ? 0x4a8cff : 0xff4a4a, side: DoubleSide }),
       );
       cloth.position.set(0.42, 1.3, 0);
       g.add(pole, cloth);
@@ -314,9 +314,9 @@ export class EffectsLayer {
       seen.add(p.id);
       let line = this.grappleLines.get(p.id);
       if (!line) {
-        line = new THREE.Mesh(
-          new THREE.BoxGeometry(1, 0.05, 0.05),
-          new THREE.MeshBasicMaterial({ color: 0xcccccc }),
+        line = new Mesh(
+          new BoxGeometry(1, 0.05, 0.05),
+          new MeshBasicMaterial({ color: 0xcccccc }),
         );
         this.scene.add(line);
         this.grappleLines.set(p.id, line);
@@ -380,9 +380,9 @@ export class EffectsLayer {
         break;
       }
       case 'rail': {
-        const beam = new THREE.Mesh(
-          new THREE.BoxGeometry(1, 0.08, 0.08),
-          new THREE.MeshBasicMaterial({ color: 0xc090ff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending }),
+        const beam = new Mesh(
+          new BoxGeometry(1, 0.08, 0.08),
+          new MeshBasicMaterial({ color: 0xc090ff, transparent: true, opacity: 1, blending: AdditiveBlending }),
         );
         const dx = ev.x1 - ev.x0;
         const dy = ev.y1 - ev.y0;
@@ -424,11 +424,11 @@ export class EffectsLayer {
         break;
       case 'abilityCast':
         if (ev.ability === 'gravityWell' && ev.tx !== undefined && ev.ty !== undefined) {
-          const g = new THREE.Group();
+          const g = new Group();
           for (let i = 0; i < 3; i++) {
-            const ring = new THREE.Mesh(
-              new THREE.RingGeometry(1.2 + i * 1.1, 1.35 + i * 1.1, 32),
-              new THREE.MeshBasicMaterial({ color: 0xd4b13e, transparent: true, opacity: 0.7 - i * 0.18, side: THREE.DoubleSide }),
+            const ring = new Mesh(
+              new RingGeometry(1.2 + i * 1.1, 1.35 + i * 1.1, 32),
+              new MeshBasicMaterial({ color: 0xd4b13e, transparent: true, opacity: 0.7 - i * 0.18, side: DoubleSide }),
             );
             ring.rotation.x = -Math.PI / 2;
             ring.position.y = 0.06 + i * 0.02;
@@ -454,24 +454,24 @@ export class EffectsLayer {
   // Particle helpers
   // -------------------------------------------------------------------------
 
-  private makeSprite(color: number, scale: number, blending: THREE.Blending, opacity = 1): THREE.Sprite {
-    const mat = new THREE.SpriteMaterial({
+  private makeSprite(color: number, scale: number, blending: Blending, opacity = 1): Sprite {
+    const mat = new SpriteMaterial({
       map: this.glowTex, color, transparent: true, opacity, blending, depthWrite: false,
     });
-    const s = new THREE.Sprite(mat);
+    const s = new Sprite(mat);
     s.scale.setScalar(scale);
     return s;
   }
 
-  private getPooledSprite(color: number, scale: number, additive: boolean, opacity: number): THREE.Sprite | null {
+  private getPooledSprite(color: number, scale: number, additive: boolean, opacity: number): Sprite | null {
     if (this.particles.length > 600) return null; // hard cap — drop excess juice
-    const s = this.spritePool.pop() ?? new THREE.Sprite(new THREE.SpriteMaterial({
+    const s = this.spritePool.pop() ?? new Sprite(new SpriteMaterial({
       map: this.glowTex, transparent: true, depthWrite: false,
     }));
     const m = s.material;
     m.color.setHex(color);
     m.opacity = opacity;
-    m.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+    m.blending = additive ? AdditiveBlending : NormalBlending;
     s.scale.setScalar(scale);
     this.scene.add(s);
     return s;
@@ -512,9 +512,9 @@ export class EffectsLayer {
   }
 
   private ring(x: number, y: number, r: number, color: number): void {
-    const mesh = new THREE.Mesh(
-      new THREE.RingGeometry(0.8, 1, 32),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+    const mesh = new Mesh(
+      new RingGeometry(0.8, 1, 32),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: DoubleSide }),
     );
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.08, y);
@@ -531,7 +531,7 @@ export class EffectsLayer {
       p.life -= dt;
       if (p.life <= 0) {
         this.scene.remove(p.obj);
-        if (p.obj instanceof THREE.Sprite) this.spritePool.push(p.obj);
+        if (p.obj instanceof Sprite) this.spritePool.push(p.obj);
         continue;
       }
       p.vy -= p.gravity * dt;
@@ -547,7 +547,7 @@ export class EffectsLayer {
       const frac = p.life / p.maxLife;
       const scale = Math.max(0.01, p.baseScale * (1 + (1 - frac) * p.scaleRate));
       p.obj.scale.setScalar(scale);
-      if (p.obj instanceof THREE.Sprite) p.obj.material.opacity = Math.min(1, frac * 1.6);
+      if (p.obj instanceof Sprite) p.obj.material.opacity = Math.min(1, frac * 1.6);
       this.particles[w++] = p;
     }
     this.particles.length = w;
@@ -559,12 +559,12 @@ export class EffectsLayer {
       b.ttl -= dt;
       if (b.ttl <= 0) {
         this.scene.remove(b.obj);
-        (b.obj.material as THREE.Material).dispose();
+        (b.obj.material as Material).dispose();
         continue;
       }
       const frac = b.ttl / b.maxTtl;
-      (b.obj.material as THREE.MeshBasicMaterial).opacity = frac;
-      if ((b.obj.geometry as THREE.RingGeometry).type === 'RingGeometry') {
+      (b.obj.material as MeshBasicMaterial).opacity = frac;
+      if ((b.obj.geometry as RingGeometry).type === 'RingGeometry') {
         b.obj.scale.multiplyScalar(1 + dt * 2.2);
       }
       this.beams[w++] = b;

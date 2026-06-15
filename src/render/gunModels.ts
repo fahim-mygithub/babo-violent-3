@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { BoxGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, MeshStandardMaterial, Object3D, SphereGeometry, TorusGeometry } from 'three';
 import type { GunId } from '../data/weapons';
 import { GUNS } from '../data/weapons';
 
@@ -7,7 +7,7 @@ import { GUNS } from '../data/weapons';
  * primitives (no image assets, matching the rest of the render layer).
  *
  * Conventions, shared with babos.ts:
- *  - A model is a THREE.Group whose origin sits at the grip/mount so the caller
+ *  - A model is a Group whose origin sits at the grip/mount so the caller
  *    can parent it directly to the babo aim mount near (0.45, 0.05, 0).
  *  - The barrel / muzzle points along +X. Overall barrel reach is ~0.7..1.1
  *    world units (babo radius is 0.5, diameter 1.0) so the gun reads from the
@@ -25,18 +25,18 @@ const GUNMETAL_LIGHT = 0x6b7178;
 const POLY_BLACK = 0x1a1c1f;
 
 /** Game-standard metal look: roughness 0.4 / metalness 0.6 (see babos.ts). */
-function metal(color: number, roughness = 0.4, metalness = 0.6): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+function metal(color: number, roughness = 0.4, metalness = 0.6): MeshStandardMaterial {
+  return new MeshStandardMaterial({ color, roughness, metalness });
 }
 
 /** A matte-er plastic/polymer look for grips, stocks, fore-grips. */
-function poly(color: number): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.1 });
+function poly(color: number): MeshStandardMaterial {
+  return new MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.1 });
 }
 
 /** Emissive accent for energy weapons (cores, coils, rails, pilot flames). */
-function glow(color: number, intensity = 0.9): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+function glow(color: number, intensity = 0.9): MeshStandardMaterial {
+  return new MeshStandardMaterial({
     color,
     emissive: color,
     emissiveIntensity: intensity,
@@ -47,11 +47,11 @@ function glow(color: number, intensity = 0.9): THREE.MeshStandardMaterial {
 
 /** Box helper: dims (x,y,z), centre position. */
 function box(
-  mat: THREE.Material,
+  mat: Material,
   w: number, h: number, d: number,
   x: number, y: number, z: number,
-): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+): Mesh {
+  const m = new Mesh(new BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
   return m;
 }
@@ -61,28 +61,28 @@ function box(
  * radii rTop/rBottom (Cone is just rTop=0). Default sits the +X end forward.
  */
 function tube(
-  mat: THREE.Material,
+  mat: Material,
   rTop: number, rBottom: number, len: number,
   x: number, y: number, z: number,
   radial = 12,
-): THREE.Mesh {
-  const geo = new THREE.CylinderGeometry(rTop, rBottom, len, radial);
+): Mesh {
+  const geo = new CylinderGeometry(rTop, rBottom, len, radial);
   geo.rotateZ(-Math.PI / 2); // +Y axis -> +X axis
-  const m = new THREE.Mesh(geo, mat);
+  const m = new Mesh(geo, mat);
   m.position.set(x, y, z);
   return m;
 }
 
 /** Cone laid along +X with its tip pointing forward (+X). */
 function cone(
-  mat: THREE.Material,
+  mat: Material,
   radius: number, len: number,
   x: number, y: number, z: number,
   radial = 14,
-): THREE.Mesh {
-  const geo = new THREE.ConeGeometry(radius, len, radial);
+): Mesh {
+  const geo = new ConeGeometry(radius, len, radial);
   geo.rotateZ(-Math.PI / 2); // tip -> +X
-  const m = new THREE.Mesh(geo, mat);
+  const m = new Mesh(geo, mat);
   m.position.set(x, y, z);
   return m;
 }
@@ -94,9 +94,9 @@ function cone(
 // ---------------------------------------------------------------------------
 
 /** stinger — compact SMG: short body, stubby barrel, slanted stick mag, top stub. */
-function buildStinger(accent: number): THREE.Object3D[] {
+function buildStinger(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     box(body, 0.34, 0.18, 0.14, 0.18, 0.04, 0),            // receiver
     tube(metal(GUNMETAL_DARK), 0.05, 0.05, 0.26, 0.46, 0.05, 0), // short barrel
     box(metal(GUNMETAL_LIGHT), 0.1, 0.08, 0.15, 0.05, 0.13, 0),  // top stub / charging block
@@ -110,9 +110,9 @@ function buildStinger(accent: number): THREE.Object3D[] {
 }
 
 /** workhorse — the default AR: receiver, medium barrel, banana mag, carry-handle ridge, short stock. */
-function buildWorkhorse(accent: number): THREE.Object3D[] {
+function buildWorkhorse(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     box(body, 0.46, 0.16, 0.13, 0.22, 0.04, 0),            // receiver
     tube(metal(GUNMETAL_DARK), 0.045, 0.045, 0.5, 0.62, 0.05, 0), // medium barrel
     box(metal(GUNMETAL_LIGHT), 0.3, 0.05, 0.07, 0.2, 0.14, 0),    // low carry-handle / rail ridge
@@ -130,9 +130,9 @@ function buildWorkhorse(accent: number): THREE.Object3D[] {
 }
 
 /** maw — wide twin-barrel shotgun: fat front, oversized bores, slung pump fore-grip. */
-function buildMaw(accent: number): THREE.Object3D[] {
+function buildMaw(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     box(body, 0.3, 0.22, 0.26, 0.16, 0.04, 0),             // chunky receiver
     box(poly(POLY_BLACK), 0.1, 0.2, 0.11, 0.0, -0.13, 0),  // grip
   ];
@@ -149,9 +149,9 @@ function buildMaw(accent: number): THREE.Object3D[] {
 }
 
 /** hurricane — minigun: hexagonal cluster of 6 rotating barrels, bulky body, muzzle ring, ammo drum. */
-function buildHurricane(accent: number): THREE.Object3D[] {
+function buildHurricane(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     tube(body, 0.16, 0.16, 0.3, 0.18, 0.05, 0, 14),        // bulky cylindrical body
     box(metal(GUNMETAL_DARK), 0.16, 0.22, 0.22, 0.02, 0.0, -0.2), // boxy ammo drum / backpack
     box(poly(POLY_BLACK), 0.1, 0.2, 0.1, 0.05, -0.14, 0),  // grip
@@ -166,18 +166,18 @@ function buildHurricane(accent: number): THREE.Object3D[] {
     parts.push(tube(barrelMat, 0.028, 0.028, 0.62, 0.62, by, bz, 8));
   }
   // Front muzzle ring (accent) tying the bundle together
-  const ringGeo = new THREE.TorusGeometry(0.1, 0.022, 8, 16);
+  const ringGeo = new TorusGeometry(0.1, 0.022, 8, 16);
   ringGeo.rotateY(Math.PI / 2); // face down +X
-  const muzzleRing = new THREE.Mesh(ringGeo, metal(accent));
+  const muzzleRing = new Mesh(ringGeo, metal(accent));
   muzzleRing.position.set(0.9, 0.05, 0);
   parts.push(muzzleRing);
   return parts;
 }
 
 /** thumper — rocket launcher: fat wide-bore tube, conical warhead poking out, rear exhaust cone. */
-function buildThumper(accent: number): THREE.Object3D[] {
+function buildThumper(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     tube(body, 0.14, 0.14, 0.62, 0.3, 0.07, 0, 16),        // fat launch tube
     box(metal(GUNMETAL_DARK), 0.12, 0.07, 0.16, 0.18, 0.18, 0), // top sight block
     box(poly(POLY_BLACK), 0.1, 0.2, 0.1, 0.08, -0.12, 0),  // grip
@@ -190,29 +190,29 @@ function buildThumper(accent: number): THREE.Object3D[] {
 }
 
 /** ion — plasma emitter: smooth shell, glowing core sphere + torus, flared emitter cup. No hard barrel. */
-function buildIon(accent: number): THREE.Object3D[] {
+function buildIon(accent: number): Object3D[] {
   const shell = metal(GUNMETAL_LIGHT, 0.3, 0.5);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     tube(shell, 0.13, 0.15, 0.4, 0.22, 0.06, 0, 18),       // smooth rounded shell
     box(poly(POLY_BLACK), 0.1, 0.2, 0.1, 0.04, -0.12, 0),  // grip
   ];
   // Energy cell underslung
   parts.push(box(glow(accent, 0.7), 0.16, 0.1, 0.12, 0.2, -0.1, 0));
   // Glowing spherical core mid-body
-  const core = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), glow(accent, 1.1));
+  const core = new Mesh(new SphereGeometry(0.1, 16, 12), glow(accent, 1.1));
   core.position.set(0.24, 0.06, 0);
   parts.push(core);
   // Glowing torus ring around the core
-  const ringGeo = new THREE.TorusGeometry(0.14, 0.025, 10, 20);
+  const ringGeo = new TorusGeometry(0.14, 0.025, 10, 20);
   ringGeo.rotateY(Math.PI / 2);
-  const coil = new THREE.Mesh(ringGeo, glow(accent, 0.9));
+  const coil = new Mesh(ringGeo, glow(accent, 0.9));
   coil.position.set(0.24, 0.06, 0);
   parts.push(coil);
   // Flared emitter cup at the front (open cone)
-  const cup = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16, 0.08, 0.18, 18, 1, true),
-    new THREE.MeshStandardMaterial({
-      color: GUNMETAL, roughness: 0.4, metalness: 0.6, side: THREE.DoubleSide,
+  const cup = new Mesh(
+    new CylinderGeometry(0.16, 0.08, 0.18, 18, 1, true),
+    new MeshStandardMaterial({
+      color: GUNMETAL, roughness: 0.4, metalness: 0.6, side: DoubleSide,
     }),
   );
   cup.geometry.rotateZ(-Math.PI / 2);
@@ -224,9 +224,9 @@ function buildIon(accent: number): THREE.Object3D[] {
 }
 
 /** lance — railgun: long thin body, twin parallel rails, mid-length charge-coil/scope hump, tiny muzzle. */
-function buildLance(accent: number): THREE.Object3D[] {
+function buildLance(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     box(body, 0.7, 0.1, 0.12, 0.4, 0.05, 0),               // long thin spine
     box(metal(GUNMETAL_DARK), 0.18, 0.12, 0.1, -0.05, 0.05, 0), // breech block
     box(poly(POLY_BLACK), 0.09, 0.2, 0.1, 0.02, -0.12, 0), // grip
@@ -238,10 +238,10 @@ function buildLance(accent: number): THREE.Object3D[] {
     parts.push(box(railMat, 0.78, 0.035, 0.025, 0.46, 0.11, z));
   }
   // Charge-coil / scope hump mid-length
-  const coilGeo = new THREE.TorusGeometry(0.08, 0.03, 10, 18);
+  const coilGeo = new TorusGeometry(0.08, 0.03, 10, 18);
   coilGeo.rotateY(Math.PI / 2);
   for (const x of [0.3, 0.46]) {
-    const coil = new THREE.Mesh(coilGeo, glow(accent, 0.95));
+    const coil = new Mesh(coilGeo, glow(accent, 0.95));
     coil.position.set(x, 0.08, 0);
     parts.push(coil);
   }
@@ -251,9 +251,9 @@ function buildLance(accent: number): THREE.Object3D[] {
 }
 
 /** pyre — flamethrower: nozzle gun, fat under-slung fuel tank, wide flared cone nozzle, pilot-flame nub. */
-function buildPyre(accent: number): THREE.Object3D[] {
+function buildPyre(accent: number): Object3D[] {
   const body = metal(GUNMETAL);
-  const parts: THREE.Object3D[] = [
+  const parts: Object3D[] = [
     box(body, 0.3, 0.16, 0.14, 0.16, 0.05, 0),             // receiver
     box(poly(POLY_BLACK), 0.1, 0.2, 0.1, 0.02, -0.12, 0),  // grip
   ];
@@ -266,23 +266,23 @@ function buildPyre(accent: number): THREE.Object3D[] {
   // Barrel out to the nozzle
   parts.push(tube(metal(GUNMETAL_DARK), 0.06, 0.06, 0.3, 0.46, 0.06, 0, 14));
   // Wide flared cone nozzle up front
-  const nozzle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.13, 0.06, 0.18, 16, 1, true),
-    new THREE.MeshStandardMaterial({
-      color: GUNMETAL, roughness: 0.4, metalness: 0.6, side: THREE.DoubleSide,
+  const nozzle = new Mesh(
+    new CylinderGeometry(0.13, 0.06, 0.18, 16, 1, true),
+    new MeshStandardMaterial({
+      color: GUNMETAL, roughness: 0.4, metalness: 0.6, side: DoubleSide,
     }),
   );
   nozzle.geometry.rotateZ(-Math.PI / 2);
   nozzle.position.set(0.74, 0.06, 0);
   parts.push(nozzle);
   // Small pilot-flame nub at the nozzle mouth (emissive accent)
-  const pilot = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), glow(accent, 1.2));
+  const pilot = new Mesh(new SphereGeometry(0.04, 10, 8), glow(accent, 1.2));
   pilot.position.set(0.82, 0.12, 0.05);
   parts.push(pilot);
   return parts;
 }
 
-const BUILDERS: Record<GunId, (accent: number) => THREE.Object3D[]> = {
+const BUILDERS: Record<GunId, (accent: number) => Object3D[]> = {
   stinger: buildStinger,
   workhorse: buildWorkhorse,
   maw: buildMaw,
@@ -297,8 +297,8 @@ const BUILDERS: Record<GunId, (accent: number) => THREE.Object3D[]> = {
  * Build the distinctive low-poly model for a gun. Barrel points along +X; the
  * group origin is at the grip/mount, ready to parent to the babo aim mount.
  */
-export function buildGunModel(gunId: GunId): THREE.Group {
-  const group = new THREE.Group();
+export function buildGunModel(gunId: GunId): Group {
+  const group = new Group();
   group.name = `gun:${gunId}`;
   const accent = GUNS[gunId].color;
   for (const part of BUILDERS[gunId](accent)) group.add(part);
@@ -310,11 +310,11 @@ export function buildGunModel(gunId: GunId): THREE.Group {
 // ---------------------------------------------------------------------------
 
 /** Recursively dispose every geometry + material of a buildGunModel() group. */
-export function disposeGunModel(group: THREE.Group): void {
+export function disposeGunModel(group: Group): void {
   group.traverse((obj) => {
-    const mesh = obj as Partial<THREE.Mesh>;
+    const mesh = obj as Partial<Mesh>;
     if (mesh.geometry) mesh.geometry.dispose();
-    const mat = (mesh as THREE.Mesh).material;
+    const mat = (mesh as Mesh).material;
     if (Array.isArray(mat)) {
       for (const m of mat) m.dispose();
     } else if (mat) {

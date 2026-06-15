@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { CanvasTexture, RepeatWrapping, SRGBColorSpace } from 'three';
 
 /** All textures are generated procedurally — the game ships zero image assets. */
 
@@ -17,7 +17,7 @@ function hashNoise(x: number, y: number, seed = 7): number {
 }
 
 /** Arena floor: dark worn concrete tiles with grime. */
-export function makeFloorTexture(): THREE.CanvasTexture {
+export function makeFloorTexture(): CanvasTexture {
   const [c, g] = canvas(1024);
   g.fillStyle = '#23262b';
   g.fillRect(0, 0, 1024, 1024);
@@ -57,15 +57,15 @@ export function makeFloorTexture(): THREE.CanvasTexture {
     g.lineTo(x + (hashNoise(i, 15) - 0.5) * 90, y + (hashNoise(i, 16) - 0.5) * 90);
     g.stroke();
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = new CanvasTexture(c);
+  tex.wrapS = tex.wrapT = RepeatWrapping;
+  tex.colorSpace = SRGBColorSpace;
   tex.anisotropy = 4;
   return tex;
 }
 
 /** Wall sides: riveted industrial panels. */
-export function makeWallTexture(): THREE.CanvasTexture {
+export function makeWallTexture(): CanvasTexture {
   const [c, g] = canvas(256);
   g.fillStyle = '#3a4047';
   g.fillRect(0, 0, 256, 256);
@@ -96,14 +96,14 @@ export function makeWallTexture(): THREE.CanvasTexture {
     g.closePath(); g.fill();
   }
   g.restore();
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = new CanvasTexture(c);
+  tex.wrapS = tex.wrapT = RepeatWrapping;
+  tex.colorSpace = SRGBColorSpace;
   return tex;
 }
 
 /** Soft radial particle (smoke, flame base, glow). */
-export function makeGlowTexture(): THREE.CanvasTexture {
+export function makeGlowTexture(): CanvasTexture {
   const [c, g] = canvas(128);
   const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
   grad.addColorStop(0, 'rgba(255,255,255,1)');
@@ -111,14 +111,14 @@ export function makeGlowTexture(): THREE.CanvasTexture {
   grad.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = grad;
   g.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = new CanvasTexture(c);
+  tex.colorSpace = SRGBColorSpace;
   return tex;
 }
 
 /** Irregular blood splat stamps — several variants, used by the splat-map. */
-export function makeSplatTextures(count = 4): THREE.CanvasTexture[] {
-  const out: THREE.CanvasTexture[] = [];
+export function makeSplatTextures(count = 4): CanvasTexture[] {
+  const out: CanvasTexture[] = [];
   for (let v = 0; v < count; v++) {
     const [c, g] = canvas(256);
     g.translate(128, 128);
@@ -146,15 +146,15 @@ export function makeSplatTextures(count = 4): THREE.CanvasTexture[] {
       g.arc(Math.cos(a) * d, Math.sin(a) * d, r, 0, Math.PI * 2);
       g.fill();
     }
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
+    const tex = new CanvasTexture(c);
+    tex.colorSpace = SRGBColorSpace;
     out.push(tex);
   }
   return out;
 }
 
 /** Directional spray splat (for hits with a direction). */
-export function makeSprayTexture(): THREE.CanvasTexture {
+export function makeSprayTexture(): CanvasTexture {
   const [c, g] = canvas(256);
   g.translate(40, 128);
   g.fillStyle = 'rgba(255,255,255,0.9)';
@@ -168,7 +168,7 @@ export function makeSprayTexture(): THREE.CanvasTexture {
     g.arc(d, spread, r, 0, Math.PI * 2);
     g.fill();
   }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  const tex = new CanvasTexture(c);
+  tex.colorSpace = SRGBColorSpace;
   return tex;
 }

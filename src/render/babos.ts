@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { CanvasTexture, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Mesh, MeshBasicMaterial, Object3D, PlaneGeometry, Quaternion, SRGBColorSpace, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial, Vector3 } from 'three';
 import { C } from '../data/constants';
 import { CLASSES } from '../data/classes';
 import type { GunId } from '../data/weapons';
@@ -15,22 +15,22 @@ import { buildClassVisual, disposeClassVisual, type ClassVisual } from './baboSh
  * (shared with the lobby preview).
  */
 interface BaboVisual {
-  group: THREE.Group;
-  body: THREE.Mesh;
-  mat: THREE.ShaderMaterial;
-  mount: THREE.Group;        // upright; yaws to aim, holds the gun model
-  gun: THREE.Group;
+  group: Group;
+  body: Mesh;
+  mat: ShaderMaterial;
+  mount: Group;        // upright; yaws to aim, holds the gun model
+  gun: Group;
   gunId: GunId;              // current held gun (rebuild the model on scavenge swap)
   visual: ClassVisual;       // class-distinctive accessories
   phased: boolean;           // last-applied Phantom phase fade state
-  shadow: THREE.Mesh;
-  marker: THREE.Mesh;      // bounty leader crown
-  flagPole: THREE.Group;   // CTF carry indicator
-  nameTag: THREE.Sprite;
+  shadow: Mesh;
+  marker: Mesh;      // bounty leader crown
+  flagPole: Group;   // CTF carry indicator
+  nameTag: Sprite;
 }
 
 /** BV2-style floating name tag (canvas-rendered, white with dark outline). */
-function makeNameSprite(name: string): THREE.Sprite {
+function makeNameSprite(name: string): Sprite {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 48;
@@ -43,9 +43,9 @@ function makeNameSprite(name: string): THREE.Sprite {
   g.strokeText(name, 128, 24);
   g.fillStyle = 'rgba(235,240,245,0.95)';
   g.fillText(name, 128, 24);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+  const tex = new CanvasTexture(c);
+  tex.colorSpace = SRGBColorSpace;
+  const sprite = new Sprite(new SpriteMaterial({
     map: tex, transparent: true, depthWrite: false,
   }));
   sprite.scale.set(2.2, 0.41, 1);
@@ -55,9 +55,9 @@ function makeNameSprite(name: string): THREE.Sprite {
 
 /** Set transparent+opacity on every (opaque) material under an object — Phantom
  *  phase fade for the held gun, restored cleanly when phase ends. */
-function setGroupOpacity(obj: THREE.Object3D, opacity: number): void {
+function setGroupOpacity(obj: Object3D, opacity: number): void {
   obj.traverse((o) => {
-    const m = (o as THREE.Mesh).material;
+    const m = (o as Mesh).material;
     const mats = Array.isArray(m) ? m : m ? [m] : [];
     for (const mm of mats) {
       mm.transparent = opacity < 1;
@@ -67,14 +67,14 @@ function setGroupOpacity(obj: THREE.Object3D, opacity: number): void {
 }
 
 /** Recursively dispose geometries, materials and any material textures. */
-function disposeObject3D(obj: THREE.Object3D): void {
+function disposeObject3D(obj: Object3D): void {
   obj.traverse((o) => {
-    const mesh = o as THREE.Mesh;
+    const mesh = o as Mesh;
     if (mesh.geometry) mesh.geometry.dispose();
     const m = mesh.material;
     const mats = Array.isArray(m) ? m : m ? [m] : [];
     for (const mm of mats) {
-      const tex = (mm as THREE.MeshBasicMaterial).map ?? (mm as THREE.SpriteMaterial).map;
+      const tex = (mm as MeshBasicMaterial).map ?? (mm as SpriteMaterial).map;
       if (tex) tex.dispose();
       mm.dispose();
     }
@@ -83,34 +83,34 @@ function disposeObject3D(obj: THREE.Object3D): void {
 
 export class BaboPool {
   private visuals = new Map<number, BaboVisual>();
-  private sphereGeo = new THREE.SphereGeometry(C.BABO_RADIUS, 28, 20);
-  private shadowGeo = new THREE.CircleGeometry(C.BABO_RADIUS * 1.1, 20);
-  private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
-  private tmpAxis = new THREE.Vector3();
-  private tmpQuat = new THREE.Quaternion();
+  private sphereGeo = new SphereGeometry(C.BABO_RADIUS, 28, 20);
+  private shadowGeo = new CircleGeometry(C.BABO_RADIUS * 1.1, 20);
+  private shadowMat = new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
+  private tmpAxis = new Vector3();
+  private tmpQuat = new Quaternion();
 
-  constructor(private scene: THREE.Scene) {}
+  constructor(private scene: Scene) {}
 
   private create(p: PlayerState): BaboVisual {
     const cls = CLASSES[p.classId];
-    const group = new THREE.Group();
+    const group = new Group();
 
     // Class-distinctive accessories + cosmetic body scale (baboShapes.ts).
     const visual = buildClassVisual(p.classId, C.BABO_RADIUS);
     const mat = makeBaboMaterial(cls.color, C.BABO_RADIUS, C.BABO_RADIUS * visual.bodyScale);
-    const body = new THREE.Mesh(this.sphereGeo, mat);
+    const body = new Mesh(this.sphereGeo, mat);
     body.scale.setScalar(visual.bodyScale);
     group.add(body);
     for (const o of visual.roll) body.add(o);     // tumble with the ball (inherits bodyScale)
     // Upright bits ride a bodyScale wrapper so they track the scaled shell too.
-    const uprightHolder = new THREE.Group();
+    const uprightHolder = new Group();
     uprightHolder.scale.setScalar(visual.bodyScale);
     for (const o of visual.upright) uprightHolder.add(o);
     group.add(uprightHolder);
 
     // Aim mount: upright group that yaws to aim while the ball rolls under it.
     // True to BV2, the babo has no face — the held gun is the only oriented part.
-    const mount = new THREE.Group();
+    const mount = new Group();
     group.add(mount);
 
     // Held gun: a distinct 3D model per weapon, muzzle along aim (+X).
@@ -118,15 +118,15 @@ export class BaboPool {
     gun.position.set(0.45, 0.06, 0);
     mount.add(gun);
 
-    const shadow = new THREE.Mesh(this.shadowGeo, this.shadowMat);
+    const shadow = new Mesh(this.shadowGeo, this.shadowMat);
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = -C.BABO_RADIUS + 0.02;
     group.add(shadow);
 
     // Bounty leader crown: visible through walls
-    const marker = new THREE.Mesh(
-      new THREE.ConeGeometry(0.28, 0.42, 4),
-      new THREE.MeshBasicMaterial({ color: 0xffc83a, depthTest: false, transparent: true, opacity: 0.95 }),
+    const marker = new Mesh(
+      new ConeGeometry(0.28, 0.42, 4),
+      new MeshBasicMaterial({ color: 0xffc83a, depthTest: false, transparent: true, opacity: 0.95 }),
     );
     marker.position.y = 1.6; // above the name tag
     marker.rotation.x = Math.PI;
@@ -135,15 +135,15 @@ export class BaboPool {
     group.add(marker);
 
     // CTF flag indicator
-    const flagPole = new THREE.Group();
-    const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.03, 0.03, 0.9),
-      new THREE.MeshBasicMaterial({ color: 0xcccccc }),
+    const flagPole = new Group();
+    const pole = new Mesh(
+      new CylinderGeometry(0.03, 0.03, 0.9),
+      new MeshBasicMaterial({ color: 0xcccccc }),
     );
     pole.position.y = 1.1;
-    const cloth = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.45, 0.3),
-      new THREE.MeshBasicMaterial({ color: 0xff3333, side: THREE.DoubleSide }),
+    const cloth = new Mesh(
+      new PlaneGeometry(0.45, 0.3),
+      new MeshBasicMaterial({ color: 0xff3333, side: DoubleSide }),
     );
     cloth.position.set(0.24, 1.4, 0);
     flagPole.add(pole, cloth);
@@ -217,7 +217,7 @@ export class BaboPool {
       if (vis.marker.visible) vis.marker.rotation.y = time * 2;
       vis.flagPole.visible = p.carryingFlag !== -1;
       if (p.carryingFlag !== -1) {
-        (vis.flagPole.children[1] as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>)
+        (vis.flagPole.children[1] as Mesh<PlaneGeometry, MeshBasicMaterial>)
           .material.color.setHex(p.carryingFlag === 0 ? 0x4a8cff : 0xff4a4a);
       }
     }

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Mesh, MeshBasicMaterial, OrthographicCamera, PlaneGeometry, RGBAFormat, Scene, Texture, WebGLRenderTarget, WebGLRenderer } from 'three';
 import type { MapDef } from '../data/maps';
 import { makeSplatTextures, makeSprayTexture } from './textures';
 
@@ -8,34 +8,34 @@ import { makeSplatTextures, makeSprayTexture } from './textures';
  * draw call. Never cleared during a match.
  */
 export class SplatMap {
-  readonly texture: THREE.Texture;
+  readonly texture: Texture;
 
-  private rt: THREE.WebGLRenderTarget;
-  private stampScene = new THREE.Scene();
-  private stampCam: THREE.OrthographicCamera;
-  private queue: THREE.Mesh[] = [];
-  private pool: THREE.Mesh[] = [];
-  private splatMats: THREE.MeshBasicMaterial[];
-  private sprayMat: THREE.MeshBasicMaterial;
+  private rt: WebGLRenderTarget;
+  private stampScene = new Scene();
+  private stampCam: OrthographicCamera;
+  private queue: Mesh[] = [];
+  private pool: Mesh[] = [];
+  private splatMats: MeshBasicMaterial[];
+  private sprayMat: MeshBasicMaterial;
   private rand = 1234567;
   private firstStamp = true;
 
   constructor(private mapW: number, private mapH: number) {
-    this.rt = new THREE.WebGLRenderTarget(2048, 2048, {
-      format: THREE.RGBAFormat,
+    this.rt = new WebGLRenderTarget(2048, 2048, {
+      format: RGBAFormat,
       depthBuffer: false,
       stencilBuffer: false,
     });
     this.texture = this.rt.texture;
     // Ortho camera over the whole arena in sim coordinates
-    this.stampCam = new THREE.OrthographicCamera(-mapW / 2, mapW / 2, mapH / 2, -mapH / 2, 0.1, 10);
+    this.stampCam = new OrthographicCamera(-mapW / 2, mapW / 2, mapH / 2, -mapH / 2, 0.1, 10);
     this.stampCam.position.set(0, 0, 5);
     this.stampCam.lookAt(0, 0, 0);
 
     this.splatMats = makeSplatTextures().map(
-      (t) => new THREE.MeshBasicMaterial({ map: t, transparent: true, depthTest: false, depthWrite: false }),
+      (t) => new MeshBasicMaterial({ map: t, transparent: true, depthTest: false, depthWrite: false }),
     );
-    this.sprayMat = new THREE.MeshBasicMaterial({
+    this.sprayMat = new MeshBasicMaterial({
       map: makeSprayTexture(), transparent: true, depthTest: false, depthWrite: false,
     });
   }
@@ -54,9 +54,9 @@ export class SplatMap {
     const mat = directional
       ? this.sprayMat
       : this.splatMats[Math.floor(this.nextRand() * this.splatMats.length)];
-    const mesh = this.pool.pop() ?? new THREE.Mesh(new THREE.PlaneGeometry(1, 1));
+    const mesh = this.pool.pop() ?? new Mesh(new PlaneGeometry(1, 1));
     mesh.material = mat.clone();
-    const m = mesh.material as THREE.MeshBasicMaterial;
+    const m = mesh.material as MeshBasicMaterial;
     // Blood shade variation: deep arterial to dark dried
     const shade = 0.55 + this.nextRand() * 0.45;
     m.color.setRGB(0.55 * shade, 0.02 * shade, 0.03 * shade);
@@ -80,7 +80,7 @@ export class SplatMap {
   }
 
   /** Render queued stamps into the persistent target. Call once per frame. */
-  flush(renderer: THREE.WebGLRenderer): void {
+  flush(renderer: WebGLRenderer): void {
     if (this.queue.length === 0 && !this.firstStamp) return;
     for (const m of this.queue) this.stampScene.add(m);
     const prevTarget = renderer.getRenderTarget();
@@ -97,7 +97,7 @@ export class SplatMap {
     renderer.setRenderTarget(prevTarget);
     for (const m of this.queue) {
       this.stampScene.remove(m);
-      ((m.material as THREE.MeshBasicMaterial)).dispose();
+      ((m.material as MeshBasicMaterial)).dispose();
       this.pool.push(m);
     }
     this.queue.length = 0;

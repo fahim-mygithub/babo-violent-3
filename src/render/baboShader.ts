@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Color, ShaderMaterial } from 'three';
 
 /**
  * The diegetic-health Babo shader, shared by the in-match BaboPool and the
@@ -87,7 +87,7 @@ void main() {
 `;
 
 export interface BaboUniforms {
-  uColor: { value: THREE.Color };
+  uColor: { value: Color };
   uHp: { value: number };
   uCenterY: { value: number };
   uRadius: { value: number };
@@ -99,13 +99,13 @@ export interface BaboUniforms {
 }
 
 /** A fresh Babo ShaderMaterial. `centerY`/`radius` default to the in-game ball. */
-export function makeBaboMaterial(color: number, centerY = 0.5, radius = 0.5): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+export function makeBaboMaterial(color: number, centerY = 0.5, radius = 0.5): ShaderMaterial {
+  return new ShaderMaterial({
     vertexShader: BABO_VERT,
     fragmentShader: BABO_FRAG,
     transparent: true,
     uniforms: {
-      uColor: { value: new THREE.Color(color) },
+      uColor: { value: new Color(color) },
       uHp: { value: 1 },
       uCenterY: { value: centerY },
       uRadius: { value: radius },
