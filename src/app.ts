@@ -168,6 +168,20 @@ export class App {
     this.previewCanvas = null;
   }
 
+  /**
+   * Fire-and-forget warm of the rapier + render chunks the moment a lobby opens,
+   * so the first cold local/host match doesn't freeze on a black screen while the
+   * WASM + render bundle download. Rejections are harmless — they re-import on use.
+   */
+  private prefetchMatchChunks(): void {
+    if (this.prefetched) return;
+    this.prefetched = true;
+    void import('@dimforge/rapier2d').catch(() => {});
+    void import('./render/renderer').catch(() => {});
+    void import('./render/hud').catch(() => {});
+    void import('./render/screenfx').catch(() => {});
+  }
+
   private showLocalLobby(): void {
     const bots: LobbyViewPlayer[] = [];
     for (let i = 0; i < this.cfg.botCount; i++) {
@@ -205,6 +219,7 @@ export class App {
       },
     });
     this.mountLobbyPreview();
+    this.prefetchMatchChunks();
   }
 
   private async startHosting(): Promise<void> {
@@ -273,6 +288,7 @@ export class App {
       },
     });
     this.mountLobbyPreview();
+    this.prefetchMatchChunks();
   }
 
   private async joinGame(code: string): Promise<void> {
