@@ -441,9 +441,7 @@ export const FLAGS = {
 
 ---
 
-I have sufficient context. The Foundation part (which precedes mine) establishes: `tests/helpers.ts` with `simHash`, a golden-hash determinism guard, `src/data/runtime.ts`, and `tests/purity.test.ts`. My Phase 1 part continues numbering after Foundation. I'll assume Foundation produced `simHash` in `tests/helpers.ts` and a `tests/determinism.test.ts` golden baseline, and `src/data/runtime.ts`. I'll start numbering at Task 7 (Foundation being Tasks 1-6 conventionally).
 
-Now I'll write the Phase 1 markdown.
 
 ## Phase 1 — It Loads (bundle deferral + perf quick-wins + mobile shell)
 
@@ -1705,7 +1703,6 @@ Per spec roadmap P1 exit criteria and S8.7, before declaring Phase 1 done, run t
 
 ---
 
-I have thorough context now. I understand the codebase, the spec's exact references, and the P1 prerequisites (RUNTIME config, viewport bus, `quality.ts`/`QUALITY`/`detectQuality`/`setTierOverride`, `simHash`, golden hashes). Phase 1 ends task numbering somewhere; per instructions I "continue numbering" assuming previous parts done. I'll start Phase 2 at Task 30 (a reasonable continuation point given Foundation + P1 would consume tasks 1-29).
 
 
 
@@ -3734,7 +3731,6 @@ git add -A && git commit -m "chore(phase2): exit-gate verification (typecheck/te
 
 ---
 
-I now have everything I need. The previous parts establish: `tests/helpers.ts`, a golden `simHash` (S8.1), `tickCombat` helper, `src/render/quality.ts` (`QUALITY`), `src/data/runtime.ts`, scene-graph instrumentation infra (S8.2), and `C.NET_BINARY_SNAPSHOTS`/`wireVersion` flags. Phase 3 continues numbering — I'll start at Task 40 (a safe continuation point assuming the prior three parts consumed tasks 1-39).
 
 
 
@@ -4578,5 +4574,4 @@ git diff --staged | grep -q "Worker-offload seam" && echo "seam documented"
 ---
 
 > **Phase 3 exit gate (per S8.7, profile-gated).** For every task actually shipped: `tsc --noEmit` green; `npm test` green incl. all new scene/net/audio tests; `purity.test.ts` green (no render/net/audio leak into `src/sim/**`); flag-OFF golden hash == P2 baseline (binary snapshots are D-SAFE — the host-step-hash test in Task 47 proves it); step-cost `<8 ms` and the heavy-projectile median still under budget; **L5 device sign-off** (`__bv3perf` p50 ≥58 fps, p95 ≤~22 ms, portrait, on Pixel 6a / iPhone 11 / SE2) — CI has no GPU so this is the required human checkbox. **Desktop (`tier==='high'`) must be visually/behaviorally identical to P2** (the only intentional delta is Task 43's shadow `InstancedMesh`, still pixel-identical), verified by visual diff. **Any task whose named bottleneck did not appear red in the P2 profile is SKIPPED with the reason recorded in the phase log.**
-
 
