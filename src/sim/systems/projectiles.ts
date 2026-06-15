@@ -1,8 +1,23 @@
 import { dist, norm, segCircle } from '../../core/math';
-import { C } from '../../data/constants';
+import { C, FLAGS } from '../../data/constants';
 import { GUNS } from '../../data/weapons';
 import type { GameSim } from '../sim';
 import type { PlayerState, Projectile } from '../types';
+
+/**
+ * Grief/lag-spam guard: while the projectile list is over `cap`, remove the
+ * OLDEST bullet only (front scan). NEVER drops a rocket/flame/rail mid-flight —
+ * deleting a live thumper/pyre/lance would change damage outcomes. The front
+ * scan makes the choice order-deterministic (per-seed stable). The cap is
+ * unreachable in normal play (~100 ≪ 256), so this is golden-hash-identical.
+ */
+export function capProjectiles(arr: { kind: string }[], cap: number): void {
+  while (arr.length > cap) {
+    const i = arr.findIndex((p) => p.kind === 'bullet');
+    if (i < 0) break; // no bullet to sacrifice — never touch a live rocket/flame/rail
+    arr.splice(i, 1);
+  }
+}
 
 /** Terminal rail beam: muzzle (captured ox,oy) → real impact/expiry point. */
 function emitRail(sim: GameSim, pr: Projectile, x1: number, y1: number): void {
@@ -28,6 +43,8 @@ export function projectileSystem(sim: GameSim, dt: number): void {
     if (stepProjectile(sim, arr[i], dt)) arr[w++] = arr[i];
   }
   arr.length = w;
+  // Grief/lag-spam guard (unreachable in normal play; order-deterministic).
+  capProjectiles(arr, FLAGS.MAX_PROJECTILES);
 }
 
 /** Advance one projectile by dt. Returns true to keep it, false to despawn. */

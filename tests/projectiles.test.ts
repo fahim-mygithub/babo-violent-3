@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { C, FLAGS } from '../src/data/constants';
 import type { GameSim } from '../src/sim/sim';
-import { projectileSystem } from '../src/sim/systems/projectiles';
+import { capProjectiles, projectileSystem } from '../src/sim/systems/projectiles';
 import type { PlayerState, Projectile, Team } from '../src/sim/types';
 import { makeSim, teleport, tickCombat } from './helpers';
 
@@ -179,5 +179,47 @@ describe('S2 foundation (Task 56)', () => {
     // A bullet was spawned by weaponSystem and advanced by projectileSystem.
     expect(sim.events.some((e) => e.t === 'shot')).toBe(true);
     expect(sim.projectiles.some((pr) => pr.x > 0.65)).toBe(true);
+  });
+});
+
+describe('MAX_PROJECTILES grief guard (Task 60)', () => {
+  it('drops the oldest BULLET, never a rocket/flame/rail', () => {
+    const arr: { id: number; kind: string }[] = [];
+    // oldest is a rocket, then a bullet, then flames — cap should remove the bullet
+    arr.push({ id: 1, kind: 'rocket' });
+    arr.push({ id: 2, kind: 'bullet' });
+    arr.push({ id: 3, kind: 'flame' });
+    arr.push({ id: 4, kind: 'bullet' });
+    capProjectiles(arr, 3); // over by 1
+    expect(arr.length).toBe(3);
+    expect(arr.find((p) => p.id === 1)).toBeDefined();   // rocket kept
+    expect(arr.find((p) => p.id === 3)).toBeDefined();   // flame kept
+    expect(arr.find((p) => p.id === 2)).toBeUndefined(); // oldest bullet dropped
+    expect(arr.find((p) => p.id === 4)).toBeDefined();   // newer bullet kept
+  });
+
+  it('drops nothing when no bullet exists even if over cap (grief-guard only)', () => {
+    const arr: { id: number; kind: string }[] = [{ id: 1, kind: 'rocket' }, { id: 2, kind: 'flame' }];
+    capProjectiles(arr, 1);
+    expect(arr.length).toBe(2); // never deletes a live rocket/flame
+  });
+
+  it('drops oldest-first, multiple bullets, until at cap (order-deterministic front scan)', () => {
+    const arr: { id: number; kind: string }[] = [
+      { id: 1, kind: 'bullet' }, { id: 2, kind: 'rocket' },
+      { id: 3, kind: 'bullet' }, { id: 4, kind: 'bullet' },
+    ];
+    capProjectiles(arr, 2); // over by 2 → drop the two oldest bullets (1 then 3)
+    expect(arr.length).toBe(2);
+    expect(arr.find((p) => p.id === 1)).toBeUndefined();
+    expect(arr.find((p) => p.id === 3)).toBeUndefined();
+    expect(arr.find((p) => p.id === 2)).toBeDefined(); // rocket never dropped
+    expect(arr.find((p) => p.id === 4)).toBeDefined(); // newest bullet kept
+  });
+
+  it('is a no-op under the cap', () => {
+    const arr: { id: number; kind: string }[] = [{ id: 1, kind: 'bullet' }];
+    capProjectiles(arr, 256);
+    expect(arr.length).toBe(1);
   });
 });
