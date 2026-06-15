@@ -64,6 +64,10 @@ export class EffectsLayer {
   private beams: { obj: Mesh; ttl: number; maxTtl: number }[] = [];
   private particles: Particle[] = [];
   private spritePool: Sprite[] = [];
+  // Free-list of dead Particle records, recycled by makeParticle() so heavy bursts
+  // allocate zero new Particle objects in steady state (the sprite is already pooled
+  // via spritePool). Bounded by the largest concurrent burst, not total events.
+  private particlePool: Particle[] = [];
 
   private arcDots: Mesh[] = [];
   private arcLanding: Mesh;
@@ -555,8 +559,7 @@ export class EffectsLayer {
       const obj = this.getPooledSprite(color, baseScale, gravity, 0.95);
       if (!obj) return;
       obj.position.set(x, h, y);
-      this.particles.push({
-        obj,
+      this.particles.push(this.makeParticle(obj, {
         vx: Math.cos(a) * sp,
         vz: Math.sin(a) * sp,
         vy: gravity ? 2 + Math.random() * 4 : 0.4,
@@ -565,17 +568,28 @@ export class EffectsLayer {
         scaleRate: gravity ? -0.1 : 1.2,
         baseScale,
         bounce: gravity,
-      });
+      }));
     }
+  }
+
+  /**
+   * Draw a recycled Particle record from the free-list (or allocate one if empty)
+   * and populate it. Reusing the record object means a steady-state burst storm
+   * allocates zero Particle records — render-only, no behavioural change.
+   */
+  private makeParticle(obj: Sprite | Mesh, init: Omit<Particle, 'obj'>): Particle {
+    const p = this.particlePool.pop();
+    if (p) { p.obj = obj; Object.assign(p, init); return p; }
+    return { obj, ...init };
   }
 
   private flash(x: number, y: number, scale: number, color: number, life: number): void {
     const obj = this.getPooledSprite(color, scale * 2, true, 1);
     if (!obj) return;
     obj.position.set(x, BH, y);
-    this.particles.push({
-      obj, vx: 0, vy: 0, vz: 0, life, maxLife: life, gravity: 0, scaleRate: 6, baseScale: scale * 2, bounce: false,
-    });
+    this.particles.push(this.makeParticle(obj, {
+      vx: 0, vy: 0, vz: 0, life, maxLife: life, gravity: 0, scaleRate: 6, baseScale: scale * 2, bounce: false,
+    }));
   }
 
   private ring(x: number, y: number, r: number, color: number): void {
@@ -600,6 +614,7 @@ export class EffectsLayer {
       if (p.life <= 0) {
         this.scene.remove(p.obj);
         if (p.obj instanceof Sprite) this.spritePool.push(p.obj);
+        this.particlePool.push(p); // recycle the record for the next burst
         continue;
       }
       p.vy -= p.gravity * dt;
