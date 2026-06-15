@@ -23,3 +23,19 @@ exports[`determinism golden guard > frozen golden hashes at ticks 300/600/1200 (
   "600": "35681abe00000258",
 }
 `;
+
+exports[`lance projectile determinism (S2.8) > flag-OFF all-Lance run matches its own frozen baseline (legacy hitscan) > lance-flag-off 1`] = `
+{
+  "1200": "5f807600000004b0",
+  "300": "30e1044f0000012c",
+  "600": "961acfd600000258",
+}
+`;
+
+exports[`lance projectile determinism (S2.8) > flag-ON all-Lance run is cross-instance deterministic + has its OWN golden hash > lance-flag-on 1`] = `
+{
+  "1200": "279868e3000004b0",
+  "300": "2335935c0000012c",
+  "600": "03fc5a3400000258",
+}
+`;

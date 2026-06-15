@@ -251,6 +251,18 @@ describe('weaponSystem', () => {
       expect(r.x0).toBeCloseTo(0.65, 2); // muzzle origin (ox)
       expect(r.x1).toBeLessThan(4.1);    // impact at victim
     });
+
+    it('point-blank victim at 0.7u dies the same tick the rail fires', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'spider', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 0.7, 0); // < 110/60 ≈ 1.83u → swept in the fire tick
+      v.hp = 50; // one 60-dmg rail kills
+      hold(sim, a.id, BTN.FIRE);
+      tickCombat(sim, 55);
+      expect(v.alive).toBe(false);
+    });
   });
 
   it('lance charge decays when released before full', async () => {
