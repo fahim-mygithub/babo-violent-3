@@ -21,7 +21,7 @@ function addBabo(sim: GameSim, name: string, team: Team, x: number, y: number): 
 function push(sim: GameSim, partial: Partial<Projectile>): Projectile {
   const pr: Projectile = {
     id: sim.newId(), kind: 'bullet', gun: 'stinger', owner: -999, team: -1,
-    x: 0, y: 0, vx: 0, vy: 0, damage: 10, dist: 0, maxDist: C.PROJECTILE_MAX_DIST,
+    x: 0, y: 0, ox: 0, oy: 0, vx: 0, vy: 0, damage: 10, dist: 0, maxDist: C.PROJECTILE_MAX_DIST,
     ...partial,
   };
   sim.projectiles.push(pr);

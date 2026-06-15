@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { BTN, clearEvents, eventsOf, input, makeSim, run, teleport } from './helpers';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { BTN, clearEvents, eventsOf, input, makeSim, run, teleport, tickCombat } from './helpers';
 import { weaponSystem } from '../src/sim/systems/weapons';
 import { GUNS, type GunId } from '../src/data/weapons';
+import { FLAGS } from '../src/data/constants';
 import type { GameSim } from '../src/sim/sim';
 import type { PlayerState } from '../src/sim/types';
 
@@ -142,41 +143,114 @@ describe('weaponSystem', () => {
     expect(p.spin).toBeLessThan(1);
   });
 
-  it('lance full charge emits rail and damages a babo on the line', async () => {
-    const sim = await makeSim();
-    const a = sim.addPlayer('A', 'spider', 0, false);
-    const v = sim.addPlayer('V', 'phantom', 1, false);
-    arm(sim, a, 'lance', 0, 0);
-    arm(sim, v, 'stinger', 4, 0); // on the +x ray, in front of the pit rim wall
-    hold(sim, a.id, BTN.FIRE);
-    tickWeapons(sim, 55); // chargeTime 0.8s = ~48 ticks → fires once
-    expect(eventsOf(sim, 'chargeReady').length).toBe(1);
-    expect(eventsOf(sim, 'rail').length).toBe(1);
-    expect(eventsOf(sim, 'shot').length).toBe(1);
-    // Charge resets on fire; the short post-shot lockout (0.1s) means a held
-    // trigger may have begun rebuilding by the time we assert.
-    expect(a.charge).toBeLessThan(0.1);
-    expect(v.hp).toBe(100 - GUNS.lance.damage);
-    // Knock along the ray (+x); phantom mass 0.8 → Δv = 12.5
-    expect(sim.bodies.get(v.id)!.linvel().x).toBeGreaterThan(5);
-    // Rail stops at the victim, not max range
-    const rail = eventsOf(sim, 'rail')[0] as { x1: number };
-    expect(rail.x1).toBeLessThan(4.1);
+  // Flag-OFF revert lock: the legacy hitscan Lance resolves same-tick.
+  describe('lance hitscan (flag OFF)', () => {
+    const prev = FLAGS.PROJECTILE_LANCE;
+    beforeEach(() => { (FLAGS as { PROJECTILE_LANCE: boolean }).PROJECTILE_LANCE = false; });
+    afterEach(() => { (FLAGS as { PROJECTILE_LANCE: boolean }).PROJECTILE_LANCE = prev; });
+
+    it('lance full charge emits rail and damages a babo on the line', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'phantom', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 4, 0); // on the +x ray, in front of the pit rim wall
+      hold(sim, a.id, BTN.FIRE);
+      tickWeapons(sim, 55); // chargeTime 0.8s = ~48 ticks → fires once
+      expect(eventsOf(sim, 'chargeReady').length).toBe(1);
+      expect(eventsOf(sim, 'rail').length).toBe(1);
+      expect(eventsOf(sim, 'shot').length).toBe(1);
+      // Charge resets on fire; the short post-shot lockout (0.1s) means a held
+      // trigger may have begun rebuilding by the time we assert.
+      expect(a.charge).toBeLessThan(0.1);
+      expect(v.hp).toBe(100 - GUNS.lance.damage);
+      // Knock along the ray (+x); phantom mass 0.8 → Δv = 12.5
+      expect(sim.bodies.get(v.id)!.linvel().x).toBeGreaterThan(5);
+      // Rail stops at the victim, not max range
+      const rail = eventsOf(sim, 'rail')[0] as { x1: number };
+      expect(rail.x1).toBeLessThan(4.1);
+    });
+
+    it('lance is blocked by walls — babo behind cover takes no damage', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'phantom', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 12, 0); // behind the pit rim accent at x∈[7.1, 8.9]
+      hold(sim, a.id, BTN.FIRE);
+      tickWeapons(sim, 55);
+      expect(eventsOf(sim, 'rail').length).toBe(1);
+      expect(v.hp).toBe(100);
+      expect(eventsOf(sim, 'hit').length).toBe(0);
+      const rail = eventsOf(sim, 'rail')[0] as { x1: number };
+      expect(rail.x1).toBeLessThan(9); // endpoint clamped to the wall face
+    });
   });
 
-  it('lance is blocked by walls — babo behind cover takes no damage', async () => {
-    const sim = await makeSim();
-    const a = sim.addPlayer('A', 'spider', 0, false);
-    const v = sim.addPlayer('V', 'phantom', 1, false);
-    arm(sim, a, 'lance', 0, 0);
-    arm(sim, v, 'stinger', 12, 0); // behind the pit rim accent at x∈[7.1, 8.9]
-    hold(sim, a.id, BTN.FIRE);
-    tickWeapons(sim, 55);
-    expect(eventsOf(sim, 'rail').length).toBe(1);
-    expect(v.hp).toBe(100);
-    expect(eventsOf(sim, 'hit').length).toBe(0);
-    const rail = eventsOf(sim, 'rail')[0] as { x1: number };
-    expect(rail.x1).toBeLessThan(9); // endpoint clamped to the wall face
+  // Flag-ON: the Lance is a fast 'rail' projectile (its own RNG stream).
+  describe('lance as rail projectile (flag ON)', () => {
+    const prev = FLAGS.PROJECTILE_LANCE;
+    beforeEach(() => { (FLAGS as { PROJECTILE_LANCE: boolean }).PROJECTILE_LANCE = true; });
+    afterEach(() => { (FLAGS as { PROJECTILE_LANCE: boolean }).PROJECTILE_LANCE = prev; });
+
+    it('full charge spawns a rail slug that travels and damages on hit + knockback', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'phantom', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 24, 0); // far enough that the slug is mid-flight, not yet resolved
+      hold(sim, a.id, BTN.FIRE);
+      tickCombat(sim, 49); // ~48 ticks to fire; one extra tick → slug exists, ~1.83u traveled
+      // The Lance now spawns a 'rail' projectile (hitscan never produces one).
+      const rail = sim.projectiles.find((pr) => pr.kind === 'rail');
+      expect(rail).toBeDefined();
+      expect(rail!.gun).toBe('lance');
+      expect(rail!.x).toBeGreaterThan(0.65); // moved past the muzzle
+      expect(rail!.x).toBeLessThan(24);       // not yet at the victim
+      expect(Math.hypot(rail!.vx, rail!.vy)).toBeCloseTo(110, 0); // muzzle speed
+      expect(v.hp).toBe(100); // not hit yet — proves it is NOT instant hitscan
+    });
+
+    it('rail slug eventually damages a victim on the line + knockback', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'phantom', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 4, 0);
+      hold(sim, a.id, BTN.FIRE);
+      tickCombat(sim, 55); // charge ~48 ticks → fire, then slug travels 4u (~3 ticks at 110/60)
+      expect(eventsOf(sim, 'shot').length).toBe(1);
+      expect(eventsOf(sim, 'chargeReady').length).toBe(1);
+      expect(v.hp).toBe(100 - GUNS.lance.damage);
+      expect(sim.bodies.get(v.id)!.linvel().x).toBeGreaterThan(5); // LANCE_KNOCK along +x
+    });
+
+    it('rail is blocked by walls — babo behind cover takes no damage', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'phantom', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 12, 0); // behind the pit rim accent
+      hold(sim, a.id, BTN.FIRE);
+      tickCombat(sim, 80);
+      expect(v.hp).toBe(100);
+      expect(eventsOf(sim, 'hit').length).toBe(0);
+    });
+
+    it('emits a terminal rail beam from captured ox,oy to the impact point', async () => {
+      const sim = await makeSim();
+      const a = sim.addPlayer('A', 'spider', 0, false);
+      const v = sim.addPlayer('V', 'phantom', 1, false);
+      arm(sim, a, 'lance', 0, 0);
+      arm(sim, v, 'stinger', 4, 0);
+      hold(sim, a.id, BTN.FIRE);
+      tickCombat(sim, 80);
+      const rails = eventsOf(sim, 'rail');
+      expect(rails.length).toBe(1);
+      const r = rails[0] as { x0: number; x1: number };
+      expect(r.x0).toBeCloseTo(0.65, 2); // muzzle origin (ox)
+      expect(r.x1).toBeLessThan(4.1);    // impact at victim
+    });
   });
 
   it('lance charge decays when released before full', async () => {

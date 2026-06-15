@@ -4,6 +4,11 @@ import { GUNS } from '../../data/weapons';
 import type { GameSim } from '../sim';
 import type { PlayerState, Projectile } from '../types';
 
+/** Terminal rail beam: muzzle (captured ox,oy) → real impact/expiry point. */
+function emitRail(sim: GameSim, pr: Projectile, x1: number, y1: number): void {
+  sim.emit({ t: 'rail', x0: pr.ox, y0: pr.oy, x1, y1, owner: pr.owner });
+}
+
 /**
  * Kinematic projectile motion + collision (no rapier bodies).
  * - Sweep each projectile by v*dt; wall hit via sim.raycastWalls (emit hitWall,
@@ -59,9 +64,17 @@ function stepProjectile(sim: GameSim, pr: Projectile, dt: number): boolean {
       if (pr.kind === 'bullet') {
         const [nx, ny] = norm(pr.vx, pr.vy);
         sim.applyImpulse(target, nx * pr.damage * 0.06, ny * pr.damage * 0.06);
+      } else if (pr.kind === 'rail') {
+        // Rail: heavy fixed knockback along travel, terminal beam to the impact.
+        const [nx, ny] = norm(pr.vx, pr.vy);
+        sim.applyImpulse(target, nx * C.LANCE_KNOCK, ny * C.LANCE_KNOCK);
+        emitRail(sim, pr, hx, hy);
       }
     } else if (pr.kind === 'bullet') {
       sim.emit({ t: 'hitWall', x: hx, y: hy, gun: pr.gun });
+    } else if (pr.kind === 'rail') {
+      // Wall-stopped: terminal beam clamps to the wall face.
+      emitRail(sim, pr, hx, hy);
     }
     // (flames despawn quietly on walls — no event)
     return false;
@@ -85,9 +98,10 @@ function stepProjectile(sim: GameSim, pr: Projectile, dt: number): boolean {
     }
   }
 
-  // Range end: rockets detonate, everything else vanishes
+  // Range end: rockets detonate, rails flash their full-length beam, rest vanish
   if (pr.dist >= pr.maxDist) {
     if (pr.kind === 'rocket') detonate(sim, pr, pr.x, pr.y);
+    else if (pr.kind === 'rail') emitRail(sim, pr, pr.x, pr.y);
     return false;
   }
   return true;

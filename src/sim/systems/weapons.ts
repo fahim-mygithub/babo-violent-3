@@ -1,11 +1,19 @@
 import { segCircle } from '../../core/math';
-import { C } from '../../data/constants';
+import { C, FLAGS } from '../../data/constants';
 import { GUNS, type GunConfig } from '../../data/weapons';
 import { BTN, type PlayerState, type ProjectileKind } from '../types';
 import type { GameSim } from '../sim';
 
 /** Distance from babo center to the muzzle along aim. */
 const MUZZLE_OFFSET = 0.65;
+/**
+ * Lance rail muzzle speed (units/s) when routed through fireProjectiles
+ * (FLAGS.PROJECTILE_LANCE). At 60 Hz a rail advances ~1.83 u/tick, so a
+ * point-blank victim (≤1.83 u) is still hit the same tick it fires. Kept here
+ * (not in the static gun data) so the flag-OFF path — including bot lead at
+ * bots.ts — sees the legacy projectileSpeed:0 and stays byte-identical.
+ */
+export const LANCE_SPEED = 110;
 /** Accumulated spread fully decays in this many seconds (rate = spreadMax / this). */
 const SPREAD_DECAY_TIME = 0.8;
 /** Released lance charge bleeds off this many times faster than it builds. */
@@ -83,7 +91,12 @@ export function weaponSystem(sim: GameSim, dt: number): void {
         p.charge = Math.min(1, p.charge + dt / gun.chargeTime);
         if (p.charge >= 1) {
           sim.emit({ t: 'chargeReady', player: p.id });
-          fireLance(sim, p, gun);
+          // Flag-ON routes the Lance through fireProjectiles (a rail slug + its
+          // unconditional sim.rng.spread(0) draw → a DISTINCT RNG stream). Flag-OFF
+          // keeps the exact legacy hitscan. discharge() runs in BOTH paths, so
+          // heat/recoil/lockout/fireCD are byte-identical either way.
+          if (FLAGS.PROJECTILE_LANCE) fireProjectiles(sim, p, gun);
+          else fireLance(sim, p, gun);
           p.charge = 0;
           discharged = true;
         }
@@ -156,14 +169,19 @@ function fireProjectiles(sim: GameSim, p: PlayerState, gun: GunConfig): void {
   const mx = p.x + Math.cos(aim) * MUZZLE_OFFSET;
   const my = p.y + Math.sin(aim) * MUZZLE_OFFSET;
   const kind: ProjectileKind =
-    gun.id === 'thumper' ? 'rocket' : gun.id === 'pyre' ? 'flame' : 'bullet';
+    gun.id === 'thumper' ? 'rocket'
+    : gun.id === 'pyre' ? 'flame'
+    : gun.id === 'lance' ? 'rail'
+    : 'bullet';
+  // The Lance carries no static projectileSpeed (legacy hitscan); use LANCE_SPEED.
+  const speed = gun.id === 'lance' ? LANCE_SPEED : gun.projectileSpeed;
   for (let i = 0; i < gun.pellets; i++) {
     const ang = aim + sim.rng.spread(gun.spread + p.spreadAcc);
     sim.projectiles.push({
       id: sim.newId(), kind, gun: gun.id, owner: p.id, team: p.team,
-      x: mx, y: my,
-      vx: Math.cos(ang) * gun.projectileSpeed,
-      vy: Math.sin(ang) * gun.projectileSpeed,
+      x: mx, y: my, ox: mx, oy: my,
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed,
       damage: gun.damage, dist: 0, maxDist: gun.range,
     });
   }
