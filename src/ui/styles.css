@@ -309,6 +309,42 @@ html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
 }
 
+/* ---------- portrait control band (S8.6) ----------
+   The play surface splits: arena reads the top ~60%, on-screen controls the
+   bottom ~40%. The analog sticks are floating-origin (no fixed DOM box) and the
+   touchControls hit zones already confine them to the lower half (left <45%w &
+   >50%h; right >45%w & >60%h). The edge BUTTONS are positioned here against the
+   bottom edge so the whole control cluster lives in the bottom band, clear of the
+   notch/home-indicator via the safe-area insets. Explicit longhand offsets (not
+   the `inset`/`bottom` shorthand) so a headless jsdom CSSOM can resolve the band
+   intent. The buttons are children of #touch-layer (z 90), so they ride above the
+   game canvases but below the .screen menus. */
+.tc-btn {
+  position: absolute;
+  top: auto;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  right: calc(18px + env(safe-area-inset-right));
+  min-width: 64px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(20, 22, 28, 0.6);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  user-select: none;
+}
+/* Action cluster stacks up the bottom-right corner (skill highest, equip lowest). */
+#tc-skill  { bottom: calc(214px + env(safe-area-inset-bottom)); }
+#tc-reload { bottom: calc(116px + env(safe-area-inset-bottom)); }
+#tc-equip  { bottom: calc(18px  + env(safe-area-inset-bottom)); }
+#tc-pickup { bottom: calc(214px + env(safe-area-inset-bottom)); right: calc(92px + env(safe-area-inset-right)); }
+/* Scoreboard + leave ride the TOP band (out of the thumb zone), bottom:auto. */
+#tc-scores { top: calc(14px + env(safe-area-inset-top)); right: calc(92px + env(safe-area-inset-right)); bottom: auto; }
+#tc-leave  { top: calc(14px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); bottom: auto; }
+
 /* ---------- portrait phone layout (S6.5) ----------
    FIRST @media block in the project. Everything above is the desktop cascade and
    stays byte-identical — these rules only apply at <=760px. The fixed 3-col
