@@ -25,8 +25,28 @@ export interface WorldView {
 const CAM_ANGLE = (65 * Math.PI) / 180; // steep top-down
 const CAM_DIST = 21;
 
+/**
+ * Pure aim-lead offset (S1.5/S1.13). Slides the camera target a touch toward the
+ * aim so the player sees more of where they're shooting. `aimLeadScale` damps the
+ * lead on touch (0.35) so the auto-fire stick doesn't yank the camera. At
+ * `aimLeadScale === 1` this is byte-identical to the original inline math, so
+ * desktop is unchanged. Zero `aimDist` → zero offset (no lead, no alloc concern).
+ */
+export function cameraLead(aim: number, aimDist: number, aimLeadScale: number): { dx: number; dy: number } {
+  const lead = 0.18 * aimLeadScale;
+  return { dx: Math.cos(aim) * aimDist * lead * 0.3, dy: Math.sin(aim) * aimDist * lead * 0.3 };
+}
+
 export class GameRenderer {
   readonly canvas: HTMLCanvasElement;
+
+  // Touch camera scalars (S1.13). Defaults reproduce the desktop camera exactly:
+  // 1× distance, no vertical target bias, full aim-lead. The App raises these for
+  // touch (+ portrait zoom) on enterMatch and orientation change.
+  camDistScale = 1;
+  camTargetYBias = 0;
+  aimLeadScale = 1;
+
   private renderer: WebGLRenderer;
   private scene = new Scene();
   private camera: PerspectiveCamera;
@@ -204,20 +224,21 @@ export class GameRenderer {
     let local: PlayerState | undefined;
     for (const p of view.players) if (p.id === localId) { local = p; break; }
     if (local && local.alive) {
-      const lead = 0.18; // slight aim lead
-      const tx = local.x + Math.cos(local.aim) * local.input.aimDist * lead * 0.3;
-      const ty = local.y + Math.sin(local.aim) * local.input.aimDist * lead * 0.3;
+      const { dx, dy } = cameraLead(local.aim, local.input.aimDist, this.aimLeadScale);
+      const tx = local.x + dx;
+      const ty = local.y + dy;
       this.camTarget.x += (tx - this.camTarget.x) * Math.min(1, dt * 7);
       this.camTarget.z += (ty - this.camTarget.z) * Math.min(1, dt * 7);
     }
     const sx = (Math.random() - 0.5) * this.shake * 0.7;
     const sy = (Math.random() - 0.5) * this.shake * 0.7;
+    const camDist = CAM_DIST * this.camDistScale;
     this.camera.position.set(
       this.camTarget.x + sx,
-      Math.sin(CAM_ANGLE) * CAM_DIST,
-      this.camTarget.z + Math.cos(CAM_ANGLE) * CAM_DIST + sy,
+      Math.sin(CAM_ANGLE) * camDist,
+      this.camTarget.z + Math.cos(CAM_ANGLE) * camDist + sy,
     );
-    this.camera.lookAt(this.camTarget.x + sx, 0, this.camTarget.z + sy);
+    this.camera.lookAt(this.camTarget.x + sx, 0, this.camTarget.z + this.camTargetYBias + sy);
 
     this.babos.update(view.players, dt, this.time, view.mode.leaderId);
     this.effects.sync(
