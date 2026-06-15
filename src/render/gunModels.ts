@@ -1,6 +1,7 @@
-import { BoxGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, MeshStandardMaterial, Object3D, SphereGeometry, TorusGeometry } from 'three';
+import { BoxGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, Object3D, SphereGeometry, TorusGeometry } from 'three';
 import type { GunId } from '../data/weapons';
 import { GUNS } from '../data/weapons';
+import { surfaceMat } from './quality';
 
 /**
  * Low-poly held-weapon models + lobby selector icons, built entirely from
@@ -25,18 +26,19 @@ const GUNMETAL_LIGHT = 0x6b7178;
 const POLY_BLACK = 0x1a1c1f;
 
 /** Game-standard metal look: roughness 0.4 / metalness 0.6 (see babos.ts). */
-function metal(color: number, roughness = 0.4, metalness = 0.6): MeshStandardMaterial {
-  return new MeshStandardMaterial({ color, roughness, metalness });
+function metal(color: number, roughness = 0.4, metalness = 0.6): Material {
+  return surfaceMat({ color, roughness, metalness });
 }
 
 /** A matte-er plastic/polymer look for grips, stocks, fore-grips. */
-function poly(color: number): MeshStandardMaterial {
-  return new MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.1 });
+function poly(color: number): Material {
+  return surfaceMat({ color, roughness: 0.75, metalness: 0.1 });
 }
 
-/** Emissive accent for energy weapons (cores, coils, rails, pilot flames). */
-function glow(color: number, intensity = 0.9): MeshStandardMaterial {
-  return new MeshStandardMaterial({
+/** Emissive accent for energy weapons (cores, coils, rails, pilot flames). On low this
+ *  folds the glow colour into the unlit base so energy guns still self-identify. */
+function glow(color: number, intensity = 0.9): Material {
+  return surfaceMat({
     color,
     emissive: color,
     emissiveIntensity: intensity,
@@ -211,7 +213,7 @@ function buildIon(accent: number): Object3D[] {
   // Flared emitter cup at the front (open cone)
   const cup = new Mesh(
     new CylinderGeometry(0.16, 0.08, 0.18, 18, 1, true),
-    new MeshStandardMaterial({
+    surfaceMat({
       color: GUNMETAL, roughness: 0.4, metalness: 0.6, side: DoubleSide,
     }),
   );
@@ -268,7 +270,7 @@ function buildPyre(accent: number): Object3D[] {
   // Wide flared cone nozzle up front
   const nozzle = new Mesh(
     new CylinderGeometry(0.13, 0.06, 0.18, 16, 1, true),
-    new MeshStandardMaterial({
+    surfaceMat({
       color: GUNMETAL, roughness: 0.4, metalness: 0.6, side: DoubleSide,
     }),
   );

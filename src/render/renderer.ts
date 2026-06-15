@@ -1,4 +1,4 @@
-import { BoxGeometry, BufferGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide, Float32BufferAttribute, Fog, HemisphereLight, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
+import { BoxGeometry, BufferGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide, Float32BufferAttribute, Fog, HemisphereLight, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
 import { C } from '../data/constants';
 import { viewportSize, onViewportChange } from '../core/viewport';
 import { GUNS } from '../data/weapons';
@@ -8,7 +8,7 @@ import type { BloodPool, FireZone, Grenade, Pickup, Projectile, SmokeZone } from
 import { BaboPool } from './babos';
 import { EffectsLayer } from './effects';
 import { laserLength } from './aimLaser';
-import { QUALITY } from './quality';
+import { QUALITY, surfaceMat } from './quality';
 import { SplatMap } from './splatmap';
 import { makeFloorTexture, makeWallTexture } from './textures';
 
@@ -117,7 +117,7 @@ export class GameRenderer {
     floorTex.repeat.set(w / 16, h / 16);
     const floor = new Mesh(
       new PlaneGeometry(w, h),
-      new MeshStandardMaterial({ map: floorTex, roughness: 0.92 }),
+      surfaceMat({ map: floorTex, roughness: 0.92 }),
     );
     floor.rotation.x = -Math.PI / 2;
     this.scene.add(floor);
@@ -139,7 +139,7 @@ export class GameRenderer {
       const pit = this.map.bloodPit;
       const pitMesh = new Mesh(
         new CircleGeometry(pit.r, 40),
-        new MeshStandardMaterial({ color: 0x14080a, roughness: 0.6 }),
+        surfaceMat({ color: 0x14080a, roughness: 0.6 }),
       );
       pitMesh.rotation.x = -Math.PI / 2;
       pitMesh.position.set(pit.x, 0.008, pit.y);
@@ -155,8 +155,8 @@ export class GameRenderer {
 
     // Walls
     const wallTex = makeWallTexture();
-    const wallMat = new MeshStandardMaterial({ map: wallTex, roughness: 0.7, metalness: 0.25 });
-    const topMat = new MeshStandardMaterial({ color: 0x2c3138, roughness: 0.8 });
+    const wallMat = surfaceMat({ map: wallTex, roughness: 0.7, metalness: 0.25 });
+    const topMat = surfaceMat({ color: 0x2c3138, roughness: 0.8 });
     for (const wall of this.map.walls) {
       const geo = new BoxGeometry(wall.w, wall.height, wall.h);
       const mats = [wallMat, wallMat, topMat, topMat, wallMat, wallMat];

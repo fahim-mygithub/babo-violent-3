@@ -1,6 +1,7 @@
-import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, Object3D, OctahedronGeometry, SphereGeometry, TorusGeometry } from 'three';
+import { BoxGeometry, Color, ConeGeometry, CylinderGeometry, Group, Material, Mesh, Object3D, OctahedronGeometry, SphereGeometry, TorusGeometry } from 'three';
 import type { ClassId } from '../data/classes';
 import { CLASSES } from '../data/classes';
+import { surfaceMat } from './quality';
 
 /**
  * Per-class visual identity ACCESSORIES for the faceless Babo marble.
@@ -37,14 +38,16 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-/** A class-tinted standard material; `shade` lightens (>1) or darkens (<1) the base hue. */
+/** A class-tinted accessory material; `shade` lightens (>1) or darkens (<1) the base hue.
+ *  Routed through surfaceMat so accessories tier with the rest of the scene (high = the
+ *  exact Standard look; mid/low drop the PBR/emissive boost). */
 function accessoryMaterial(
   baseColor: number,
   shade = 1,
   opts: { metalness?: number; roughness?: number; emissive?: number; emissiveIntensity?: number } = {},
-): MeshStandardMaterial {
+): Material {
   const col = new Color(baseColor).multiplyScalar(shade);
-  return new MeshStandardMaterial({
+  return surfaceMat({
     color: col,
     metalness: opts.metalness ?? ACCESSORY_METALNESS,
     roughness: opts.roughness ?? ACCESSORY_ROUGHNESS,
@@ -54,7 +57,7 @@ function accessoryMaterial(
 }
 
 /** A translucent class-tinted material for ethereal / halo bits. */
-function ghostMaterial(baseColor: number, shade: number, opacity: number): MeshStandardMaterial {
+function ghostMaterial(baseColor: number, shade: number, opacity: number): Material {
   const m = accessoryMaterial(baseColor, shade, { metalness: 0.1, roughness: 0.7 });
   m.transparent = true;
   m.opacity = opacity;

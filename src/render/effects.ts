@@ -1,7 +1,8 @@
-import { AdditiveBlending, Blending, BoxGeometry, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, MeshBasicMaterial, MeshStandardMaterial, NormalBlending, Object3D, PlaneGeometry, RingGeometry, Scene, SphereGeometry, Sprite, SpriteMaterial } from 'three';
+import { AdditiveBlending, Blending, BoxGeometry, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Material, Mesh, MeshBasicMaterial, NormalBlending, Object3D, PlaneGeometry, RingGeometry, Scene, SphereGeometry, Sprite, SpriteMaterial } from 'three';
 import { C } from '../data/constants';
 import { GUNS } from '../data/weapons';
 import { EQUIPMENT } from '../data/equipment';
+import { surfaceMat } from './quality';
 import type {
   BloodPool, FireZone, GameEvent, Grenade, Pickup, PlayerState, Projectile, SmokeZone,
 } from '../sim/types';
@@ -148,20 +149,21 @@ export class EffectsLayer {
     this.syncSet(grenades, this.grenMeshes,
       (gr) => new Mesh(
         this.grenadeGeo,
-        new MeshStandardMaterial({ color: EQUIPMENT[gr.kind].color, roughness: 0.5 }),
+        surfaceMat({ color: EQUIPMENT[gr.kind].color, roughness: 0.5 }),
       ),
       (gr, obj) => {
         obj.position.set(gr.x, 0.16 + gr.z, gr.y);
-        // Fuse blink for landed frags
-        const m = (obj as Mesh).material as MeshStandardMaterial;
-        m.emissive.setHex(gr.landed && gr.kind === 'frag' && Math.sin(time * 30) > 0 ? 0xff2020 : 0x000000);
+        // Fuse blink for landed frags. On low (Basic) there's no emissive channel,
+        // so guard the per-frame write rather than assume the Standard material.
+        const m = (obj as Mesh).material as { emissive?: { setHex(h: number): void } };
+        m.emissive?.setHex(gr.landed && gr.kind === 'frag' && Math.sin(time * 30) > 0 ? 0xff2020 : 0x000000);
       });
   }
 
   private syncPools(pools: BloodPool[]): void {
     this.syncSet(pools, this.poolMeshes as Map<number, Object3D>,
       () => {
-        const mesh = new Mesh(this.poolGeo, new MeshStandardMaterial({
+        const mesh = new Mesh(this.poolGeo, surfaceMat({
           color: 0x4d0408, roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.92,
         }));
         mesh.rotation.x = -Math.PI / 2;
@@ -233,14 +235,14 @@ export class EffectsLayer {
           ringColor = GUNS[pk.gun!].color;
           item = new Mesh(
             new BoxGeometry(0.62, 0.16, 0.16),
-            new MeshStandardMaterial({ color: ringColor, roughness: 0.35, metalness: 0.5, emissive: ringColor, emissiveIntensity: 0.25 }),
+            surfaceMat({ color: ringColor, roughness: 0.35, metalness: 0.5, emissive: ringColor, emissiveIntensity: 0.25 }),
           );
         } else if (pk.kind === 'health') {
           ringColor = 0xff5050;
           item = new Group();
           const box = new Mesh(
             new BoxGeometry(0.4, 0.22, 0.4),
-            new MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 }),
+            surfaceMat({ color: 0xf2f2f2, roughness: 0.4 }),
           );
           const crossMat = new MeshBasicMaterial({ color: 0xe03030 });
           const c1 = new Mesh(new BoxGeometry(0.3, 0.04, 0.1), crossMat);
@@ -251,7 +253,7 @@ export class EffectsLayer {
           ringColor = EQUIPMENT[pk.equip!].color;
           item = new Mesh(
             new SphereGeometry(0.2, 12, 8),
-            new MeshStandardMaterial({ color: ringColor, roughness: 0.4, emissive: ringColor, emissiveIntensity: 0.3 }),
+            surfaceMat({ color: ringColor, roughness: 0.4, emissive: ringColor, emissiveIntensity: 0.3 }),
           );
         }
         item.name = 'item';
@@ -287,7 +289,7 @@ export class EffectsLayer {
       const g = new Group();
       const pole = new Mesh(
         new CylinderGeometry(0.05, 0.05, 1.6),
-        new MeshStandardMaterial({ color: 0xb0b8c0, metalness: 0.6, roughness: 0.3 }),
+        surfaceMat({ color: 0xb0b8c0, metalness: 0.6, roughness: 0.3 }),
       );
       pole.position.y = 0.8;
       const cloth = new Mesh(

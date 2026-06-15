@@ -57,6 +57,22 @@ describe('surfaceMat', () => {
     expect((low as unknown as { metalness?: number }).metalness).toBeUndefined();
   });
 
+  it('high-tier glow-like input (emissive) is Standard and keeps its emissive', () => {
+    setTierOverride('high');
+    const m = surfaceMat({ color: 0x40c0ff, emissive: 0x40c0ff, emissiveIntensity: 0.9 }) as THREE.MeshStandardMaterial;
+    expect(m.type).toBe('MeshStandardMaterial');
+    expect(m.emissive.getHex()).toBe(0x40c0ff);
+  });
+
+  it('low-tier glow-like input folds emissive into the base colour (no emissive on Basic)', () => {
+    setTierOverride('low');
+    const m = surfaceMat({ color: 0x101010, emissive: 0x40c0ff, emissiveIntensity: 0.9 }) as THREE.MeshBasicMaterial;
+    expect(m.type).toBe('MeshBasicMaterial');
+    // folded → the blue channel of the emissive shows through the dim base
+    expect(m.color.b).toBeGreaterThan(0.3);
+    expect((m as unknown as { emissive?: unknown }).emissive).toBeUndefined();
+  });
+
   it('low dims the base colour (~0.85) so an unlit Basic surface is not flat-black', () => {
     setTierOverride('low');
     const map = new THREE.Texture();
