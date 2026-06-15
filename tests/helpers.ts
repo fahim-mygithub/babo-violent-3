@@ -45,3 +45,37 @@ export function eventsOf<T extends string>(sim: GameSim, t: T) {
 export function clearEvents(sim: GameSim): void {
   sim.events.length = 0;
 }
+
+// --- Determinism golden digest (spec S8.1) --------------------------------
+// Order-stable FNV-1a over the full sim state, folding each Float64 by its raw
+// 8 bytes so the hash is bit-exact (not decimal-rounded). Players are sorted by
+// id; all arrays are consumed in their stored order (already deterministic).
+const _f64 = new Float64Array(1);
+const _u8 = new Uint8Array(_f64.buffer);
+
+function fnv(state: { h: number }, n: number): void {
+  _f64[0] = n;
+  for (let i = 0; i < 8; i++) {
+    state.h ^= _u8[i];
+    state.h = Math.imul(state.h, 0x01000193) >>> 0;
+  }
+}
+
+export function simHash(sim: GameSim): string {
+  const s = { h: 0x811c9dc5 };
+  fnv(s, sim.tick);
+  const ids = [...sim.players.keys()].sort((a, b) => a - b);
+  for (const id of ids) {
+    const p = sim.players.get(id)!;
+    fnv(s, p.id); fnv(s, p.x); fnv(s, p.y); fnv(s, p.vx); fnv(s, p.vy);
+    fnv(s, p.aim); fnv(s, p.hp); fnv(s, p.kills); fnv(s, p.deaths);
+    fnv(s, p.heat); fnv(s, p.mag);
+  }
+  for (const pr of sim.projectiles) { fnv(s, pr.id); fnv(s, pr.x); fnv(s, pr.y); fnv(s, pr.vx); fnv(s, pr.vy); }
+  for (const g of sim.grenades) { fnv(s, g.id); fnv(s, g.x); fnv(s, g.y); fnv(s, g.z); fnv(s, g.fuse); }
+  for (const pool of sim.pools) { fnv(s, pool.id); fnv(s, pool.x); fnv(s, pool.y); fnv(s, pool.r); fnv(s, pool.age); }
+  for (const f of sim.fires) { fnv(s, f.id); fnv(s, f.x); fnv(s, f.y); fnv(s, f.r); fnv(s, f.ttl); }
+  fnv(s, sim.mode.teamScores[0]); fnv(s, sim.mode.teamScores[1]);
+  for (const flag of sim.mode.flags) { fnv(s, flag.team); fnv(s, flag.x); fnv(s, flag.y); fnv(s, flag.carrier); fnv(s, flag.returnT); }
+  return (s.h >>> 0).toString(16).padStart(8, '0') + (sim.tick >>> 0).toString(16).padStart(8, '0');
+}
