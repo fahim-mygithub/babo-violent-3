@@ -6,6 +6,7 @@ import type { GameEvent, ModeState, PlayerState } from '../sim/types';
 import type { BloodPool, FireZone, Grenade, Pickup, Projectile, SmokeZone } from '../sim/types';
 import { BaboPool } from './babos';
 import { EffectsLayer } from './effects';
+import { QUALITY } from './quality';
 import { SplatMap } from './splatmap';
 import { makeFloorTexture, makeWallTexture } from './textures';
 
@@ -52,8 +53,8 @@ export class GameRenderer {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'game-canvas';
     container.appendChild(this.canvas);
-    this.renderer = new WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer = new WebGLRenderer({ canvas: this.canvas, antialias: QUALITY.antialias, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY.maxPixelRatio));
 
     this.scene.background = new Color(0x0b0c10);
     this.scene.fog = new Fog(0x0b0c10, 55, 95);
