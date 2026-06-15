@@ -35,6 +35,39 @@ describe('TouchControls scaffold', () => {
   });
 });
 
+function pe(type: string, id: number, x: number, y: number): PointerEvent {
+  return new PointerEvent(type, { pointerId: id, clientX: x, clientY: y, bubbles: true });
+}
+
+describe('TouchControls left stick → movement', () => {
+  it('maps a right-down drag to mx>0,my>0 and releases to 0', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    // left zone: x in left ~45% of an 800px-wide window (jsdom innerWidth=1024 default)
+    layer.dispatchEvent(pe('pointerdown', 1, 100, 600));
+    layer.dispatchEvent(pe('pointermove', 1, 100 + 56, 600 + 56)); // full deflection, +x/+y
+    let inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.mx).toBeGreaterThan(0.5);
+    expect(inp.my).toBeGreaterThan(0.5);
+    layer.dispatchEvent(pe('pointerup', 1, 100 + 56, 600 + 56));
+    inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.mx).toBe(0);
+    expect(inp.my).toBe(0);
+  });
+
+  it('applies a dead-zone: tiny deflection → 0', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    const layer = c.querySelector('#touch-layer') as HTMLElement;
+    layer.dispatchEvent(pe('pointerdown', 1, 100, 600));
+    layer.dispatchEvent(pe('pointermove', 1, 103, 600)); // ~3px < 0.12*56
+    const inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.mx).toBe(0);
+    expect(inp.my).toBe(0);
+  });
+});
+
 describe('S8.4 desktop non-regression: dormant TouchControls does not perturb InputManager', () => {
   it('constructed TouchControls leaves InputManager.sample byte-identical', () => {
     // Capture InputManager.sample output with NO TouchControls present.
