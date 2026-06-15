@@ -1,4 +1,4 @@
-import { CanvasTexture, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Group, Mesh, MeshBasicMaterial, Object3D, PlaneGeometry, Quaternion, SRGBColorSpace, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial, Vector3 } from 'three';
+import { CanvasTexture, CircleGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Euler, Group, InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, Object3D, PlaneGeometry, Quaternion, SRGBColorSpace, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial, Vector3 } from 'three';
 import { C } from '../data/constants';
 import { CLASSES } from '../data/classes';
 import type { GunId } from '../data/weapons';
@@ -23,7 +23,6 @@ interface BaboVisual {
   gunId: GunId;              // current held gun (rebuild the model on scavenge swap)
   visual: ClassVisual;       // class-distinctive accessories
   phased: boolean;           // last-applied Phantom phase fade state
-  shadow: Mesh;
   marker: Mesh;      // bounty leader crown
   flagPole: Group;   // CTF carry indicator
   nameTag: Sprite;
@@ -37,6 +36,51 @@ interface BaboVisual {
 export function phaseTransition(phaseActive: boolean, prevPhased: boolean): boolean | null {
   if (phaseActive === prevPhased) return null;
   return phaseActive;
+}
+
+/** Max simultaneous players (and so babo shadow instances) in a match. */
+const MAX_PLAYERS = 8;
+
+/** Ground-disc geometry rotation (lie flat on the floor, facing +Y). */
+const SHADOW_ROT = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, 0));
+
+/**
+ * All babo contact shadows in ONE InstancedMesh (S3.5b) — 8 ground discs drawn in
+ * a single draw call instead of 8 meshes. Pixel-identical to the old per-babo
+ * shadows: same radius (BABO_RADIUS*1.1), colour, opacity, and world height. A dead
+ * or absent babo's instance is zero-scaled so it disappears. All tiers (lossless).
+ */
+export class ShadowInstances {
+  readonly mesh: InstancedMesh;
+  private m = new Matrix4();
+  private pos = new Vector3();
+  private scl = new Vector3();
+
+  constructor() {
+    const geo = new CircleGeometry(C.BABO_RADIUS * 1.1, 20);
+    const mat = new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
+    this.mesh = new InstancedMesh(geo, mat, MAX_PLAYERS);
+    for (let i = 0; i < MAX_PLAYERS; i++) this.set(i, 0, 0, false);
+  }
+
+  /** Place instance `i` at sim (x,y); zero-scale it when not alive. */
+  set(i: number, x: number, y: number, alive: boolean): void {
+    if (!alive) {
+      this.pos.set(0, 0, 0);
+      this.scl.set(0, 0, 0);
+    } else {
+      this.pos.set(x, 0.02, y); // world height matches the old per-babo shadow
+      this.scl.set(1, 1, 1);
+    }
+    this.m.compose(this.pos, SHADOW_ROT, this.scl);
+    this.mesh.setMatrixAt(i, this.m);
+    this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  dispose(): void {
+    this.mesh.geometry.dispose();
+    (this.mesh.material as MeshBasicMaterial).dispose();
+  }
 }
 
 /** BV2-style floating name tag (canvas-rendered, white with dark outline). */
@@ -94,12 +138,13 @@ function disposeObject3D(obj: Object3D): void {
 export class BaboPool {
   private visuals = new Map<number, BaboVisual>();
   private sphereGeo = new SphereGeometry(C.BABO_RADIUS, 28, 20);
-  private shadowGeo = new CircleGeometry(C.BABO_RADIUS * 1.1, 20);
-  private shadowMat = new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
+  private shadows = new ShadowInstances();
   private tmpAxis = new Vector3();
   private tmpQuat = new Quaternion();
 
-  constructor(private scene: Scene) {}
+  constructor(private scene: Scene) {
+    this.scene.add(this.shadows.mesh);
+  }
 
   private create(p: PlayerState): BaboVisual {
     const cls = CLASSES[p.classId];
@@ -128,10 +173,8 @@ export class BaboPool {
     gun.position.set(0.45, 0.06, 0);
     mount.add(gun);
 
-    const shadow = new Mesh(this.shadowGeo, this.shadowMat);
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.y = -C.BABO_RADIUS + 0.02;
-    group.add(shadow);
+    // Contact shadow is drawn by the shared ShadowInstances (one InstancedMesh),
+    // updated per frame in update() — not parented to the babo group.
 
     // Bounty leader crown: visible through walls
     const marker = new Mesh(
@@ -166,7 +209,7 @@ export class BaboPool {
     this.scene.add(group);
     const vis: BaboVisual = {
       group, body, mat, mount, gun, gunId: p.gun, visual, phased: false,
-      shadow, marker, flagPole, nameTag,
+      marker, flagPole, nameTag,
     };
     this.visuals.set(p.id, vis);
     return vis;
@@ -174,11 +217,15 @@ export class BaboPool {
 
   update(players: Iterable<PlayerState>, dt: number, time: number, leaderId: number): void {
     const seen = new Set<number>();
+    let shadowIdx = 0; // contiguous instance slot for each LIVE babo this frame
     for (const p of players) {
       seen.add(p.id);
       const vis = this.visuals.get(p.id) ?? this.create(p);
       vis.group.visible = p.alive;
       if (!p.alive) continue;
+
+      // One shared shadow instance per live babo (zeroed slots filled in below).
+      if (shadowIdx < MAX_PLAYERS) this.shadows.set(shadowIdx++, p.x, p.y, true);
 
       vis.group.position.set(p.x, C.BABO_RADIUS, p.y);
 
@@ -237,6 +284,10 @@ export class BaboPool {
           .material.color.setHex(p.carryingFlag === 0 ? 0x4a8cff : 0xff4a4a);
       }
     }
+    // Zero the matrix of every shadow instance not claimed by a live babo so dead
+    // / absent players cast no disc.
+    for (let i = shadowIdx; i < MAX_PLAYERS; i++) this.shadows.set(i, 0, 0, false);
+
     // Remove visuals for departed players
     for (const [id, vis] of this.visuals) {
       if (!seen.has(id)) {
@@ -265,7 +316,7 @@ export class BaboPool {
     }
     this.visuals.clear();
     this.sphereGeo.dispose();
-    this.shadowGeo.dispose();
-    this.shadowMat.dispose();
+    this.scene.remove(this.shadows.mesh);
+    this.shadows.dispose();
   }
 }
