@@ -77,6 +77,14 @@ export class EffectsLayer {
   private grenadeGeo = new SphereGeometry(0.16, 10, 8);
   private railGeo = new BoxGeometry(0.4, 0.12, 0.12); // stretched ×3.5 along travel
 
+  // Shared transient-VFX geometry — one instance reused (and per-mesh scaled) for
+  // every explosion/dash/ability ring and every rail beam, instead of allocating
+  // (and disposing) a fresh geometry per event. Unit dims + per-mesh scale ⇒ pixel-
+  // identical to the old per-event geometry. Materials stay per-mesh (they fade
+  // independently and are disposed on expiry); only the geometry is pooled.
+  private ringGeo = new RingGeometry(0.8, 1, 32);
+  private beamGeo = new BoxGeometry(1, 0.08, 0.08);
+
   constructor(private scene: Scene) {
     const landGeo = new RingGeometry(0.3, 0.42, 24);
     this.arcLanding = new Mesh(
@@ -439,7 +447,7 @@ export class EffectsLayer {
       }
       case 'rail': {
         const beam = new Mesh(
-          new BoxGeometry(1, 0.08, 0.08),
+          this.beamGeo,
           new MeshBasicMaterial({ color: 0xc090ff, transparent: true, opacity: 1, blending: AdditiveBlending }),
         );
         const dx = ev.x1 - ev.x0;
@@ -572,7 +580,7 @@ export class EffectsLayer {
 
   private ring(x: number, y: number, r: number, color: number): void {
     const mesh = new Mesh(
-      new RingGeometry(0.8, 1, 32),
+      this.ringGeo,
       new MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: DoubleSide }),
     );
     mesh.rotation.x = -Math.PI / 2;
