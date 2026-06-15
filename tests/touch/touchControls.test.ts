@@ -144,6 +144,25 @@ describe('TouchControls aim-assist', () => {
   });
 });
 
+describe('TouchControls grenade drag-arc', () => {
+  it('EQUIP-hold ORs BTN.THROW and overrides aim/aimDist from the drag, clears on release', () => {
+    const c = mount();
+    tc = new TouchControls(c, 1);
+    // EQUIPMENT button lives at a known id; simulate via the equip pointer entry point.
+    tc.beginGrenade(840, 300); // origin
+    tc.moveGrenade(840 + 140, 300); // full ARC_DRAG_PX → max range, aim +x
+    let inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.buttons & BTN.THROW).toBe(BTN.THROW);
+    expect(inp.aim).toBeCloseTo(0, 3);
+    expect(inp.aimDist).toBeGreaterThan(13); // near GRENADE_MAX_RANGE (14)
+    expect(tc.grenadeArc.active).toBe(true);
+    tc.endGrenade();
+    inp = tc.sample({ x: 0, y: 0 }, 0, 0);
+    expect(inp.buttons & BTN.THROW).toBe(0);
+    expect(tc.grenadeArc.active).toBe(false);
+  });
+});
+
 describe('S8.4 desktop non-regression: dormant TouchControls does not perturb InputManager', () => {
   it('constructed TouchControls leaves InputManager.sample byte-identical', () => {
     // Capture InputManager.sample output with NO TouchControls present.

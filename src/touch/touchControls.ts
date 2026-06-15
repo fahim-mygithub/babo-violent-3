@@ -1,5 +1,6 @@
 import { angleDiff } from '../core/math';
 import { viewportSize } from '../core/viewport';
+import { C } from '../data/constants';
 import type { PlayerInput, PlayerState } from '../sim/types';
 import { BTN } from '../sim/types';
 import type { InputSource } from '../input';
@@ -10,6 +11,8 @@ const AIM_DEADZONE = 0.25;
 const MOVE_DEADZONE = 0.12;
 const AIM_MIN_DIST = 3;
 const AIM_MAX_DIST = 16;
+/** Pixels of drag for a full-range grenade throw (mirrors desktop RMB hold-time). */
+const ARC_DRAG_PX = 140;
 
 /**
  * Aim-assist (S1.6). Soft angular magnetism only — STRENGTH is capped at 0.30 so
@@ -53,6 +56,9 @@ export class TouchControls implements InputSource {
   private rightId = -1;
   private rightOX = 0;
   private rightOY = 0;
+
+  private grenOX = 0;
+  private grenOY = 0;
 
   constructor(private container: HTMLElement, private localId: number) {
     this.layer = document.createElement('div');
@@ -162,16 +168,47 @@ export class TouchControls implements InputSource {
     return rawAim + angleDiff(rawAim, bestAng) * ASSIST.STRENGTH * (1 - bestErr / ASSIST.CONE);
   }
 
+  /** EQUIPMENT hold begins the grenade arc, suspending the aim stick. */
+  beginGrenade(x: number, y: number): void {
+    this.grenadeArc.active = true;
+    this.grenadeArc.aim = 0;
+    this.grenadeArc.dist = C.GRENADE_MIN_RANGE;
+    this.grenOX = x;
+    this.grenOY = y;
+  }
+
+  /** Drag distance scales throw range; direction sets the arc aim (mirrors RMB). */
+  moveGrenade(x: number, y: number): void {
+    if (!this.grenadeArc.active) return;
+    const dx = x - this.grenOX;
+    const dy = y - this.grenOY;
+    this.grenadeArc.aim = Math.atan2(dy, dx);
+    const m = Math.min(1, Math.hypot(dx, dy) / ARC_DRAG_PX);
+    this.grenadeArc.dist = C.GRENADE_MIN_RANGE + (C.GRENADE_MAX_RANGE - C.GRENADE_MIN_RANGE) * m;
+  }
+
+  /** Release: drop BTN.THROW so the sim's falling-edge releaseThrow fires. */
+  endGrenade(): void {
+    this.grenadeArc.active = false;
+  }
+
   sample(_ground: { x: number; y: number }, _px: number, _py: number): PlayerInput {
     let buttons = 0;
     if (this.firing) buttons |= BTN.FIRE;
-    const aimDist = this.aimActive
-      ? AIM_MIN_DIST + (AIM_MAX_DIST - AIM_MIN_DIST) * this.aimMag
-      : AIM_MIN_DIST;
     // Aim-assist is on by default; explicit `false` (a settings toggle, S1.6)
     // disables it. Read defensively so headless tests keep assist on.
     const assistOn = (window as { __bv3?: { touchAssist?: boolean } }).__bv3?.touchAssist !== false;
-    const aim = assistOn ? this.assist(this.aimAngle) : this.aimAngle;
+    let aim = assistOn ? this.assist(this.aimAngle) : this.aimAngle;
+    let aimDist = this.aimActive
+      ? AIM_MIN_DIST + (AIM_MAX_DIST - AIM_MIN_DIST) * this.aimMag
+      : AIM_MIN_DIST;
+    // The grenade arc takes priority over the gun aim while held: OR THROW and
+    // override aim/dist from the drag (no aim-assist on the arc).
+    if (this.grenadeArc.active) {
+      buttons |= BTN.THROW;
+      aim = this.grenadeArc.aim;
+      aimDist = this.grenadeArc.dist;
+    }
     return {
       mx: this.moveX, my: this.moveY,
       aim, aimDist,
