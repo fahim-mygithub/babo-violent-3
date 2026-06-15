@@ -558,23 +558,38 @@ export class App {
 
   private sampleInput(view: WorldView | null) {
     const local = this.localPlayer(view);
-    if (!local || !this.renderer) return emptyInput();
+    if (!local) return emptyInput();
+    return this.samplePos(local.x, local.y);
+  }
+
+  /**
+   * Produce this frame's input given the local player's position. Split out from
+   * sampleInput so the client tick path can feed predictedSelf() (S5.4) and avoid
+   * forcing a full interpolated view rebuild just to read the own-babo position.
+   */
+  private samplePos(px: number, py: number) {
+    if (!this.renderer) return emptyInput();
     // Touch path: the producer computes its own aim from the right stick, so it
-    // gets a zero ground (no mouse unprojection) + the live world for aim-assist.
+    // gets a zero ground (no mouse unprojection) + the live world for aim-assist
+    // (set via setWorld at the call site).
     if (this.activeSource === this.touch && this.touch) {
-      this.touch.setWorld(view, this.localId);
-      return this.touch.sample({ x: 0, y: 0 }, local.x, local.y);
+      return this.touch.sample({ x: 0, y: 0 }, px, py);
     }
     const ground = this.renderer.groundPoint(this.kbm.mouseX, this.kbm.mouseY);
-    return this.kbm.sample(ground, local.x, local.y);
+    return this.kbm.sample(ground, px, py);
   }
 
   private tick(): void {
     if (this.role === 'client') {
       const client = this.client;
       if (!client) return;
-      this.touch?.setWorld(client.view, this.localId);
-      const input = this.sampleInput(client.view);
+      // Per-tick own-babo position comes from the predictor, never the full view —
+      // so the tick loop doesn't trigger an interpolated rebuild. The touch source
+      // still needs the live world for aim-assist, so only it reads client.view
+      // (a cache hit within the frame thanks to view memoization).
+      const self = client.predictedSelf();
+      if (this.activeSource === this.touch && this.touch) this.touch.setWorld(client.view, this.localId);
+      const input = self ? this.samplePos(self.x, self.y) : emptyInput();
       client.sendInput(input);
       return;
     }
