@@ -446,7 +446,7 @@ export class App {
     this.renderer = new GameRenderer(this.container, map);
     this.hud = new Hud(this.container, (x, y, h) => this.renderer!.project(x, y, h));
     this.fx = new ScreenFx(this.container);
-    this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt));
+    this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, this.role === 'host');
     this.loop.start();
     void this.acquireWakeLock();
   }

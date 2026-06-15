@@ -20,6 +20,9 @@ export class FixedLoop {
     private readonly tick: () => void,
     private readonly render: (alpha: number, frameDt: number) => void,
     private readonly maxCatchUp = 5,
+    // Only the HOST keeps ticking while hidden (it's authoritative). Local/client
+    // intentionally pause-and-resync on hidden, so they skip the keep-alive.
+    private readonly keepAliveWhenHidden = false,
   ) {
     this.dt = 1 / tickHz;
   }
@@ -52,10 +55,13 @@ export class FixedLoop {
       this.raf = requestAnimationFrame(frame);
     };
     this.raf = requestAnimationFrame(frame);
-    // Background fallback: keep the sim alive while the tab is hidden.
-    this.interval = window.setInterval(() => {
-      if (this.running && document.hidden) this.advance(false);
-    }, 50);
+    // Background fallback: keep the sim alive while the tab is hidden. Host-only —
+    // local/client pause-and-resync instead, so they never install this interval.
+    if (this.keepAliveWhenHidden) {
+      this.interval = window.setInterval(() => {
+        if (this.running && document.hidden) this.advance(false);
+      }, 50);
+    }
   }
 
   stop(): void {
