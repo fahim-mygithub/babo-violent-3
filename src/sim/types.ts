@@ -11,6 +11,7 @@ export const BTN = {
   THROW: 2,
   ABILITY: 4,
   PICKUP: 8,
+  RELOAD: 16,
 } as const;
 
 export interface PlayerInput {

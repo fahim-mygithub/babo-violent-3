@@ -106,6 +106,17 @@ export function weaponSystem(sim: GameSim, dt: number): void {
       sim.emit({ t: 'reloadStart', player: p.id, gun: p.gun });
     }
 
+    // Manual reload (edge-triggered). Inert for heat guns, full mags, mid-reload,
+    // and the same tick a shot already discharged (avoids double-trigger).
+    const reloadPressed = (p.input.buttons & BTN.RELOAD) && !(p.prevButtons & BTN.RELOAD);
+    if (
+      gun.sustain === 'reload' && reloadPressed &&
+      p.reloadT === 0 && p.mag < (gun.magSize ?? 0) && !discharged
+    ) {
+      p.reloadT = gun.reloadTime!;
+      sim.emit({ t: 'reloadStart', player: p.id, gun: p.gun });
+    }
+
     // Heat dissipates while not firing; an overheat lockout always cools.
     if (gun.sustain === 'heat' && !discharged && (!fireHeld || p.overheatT > 0)) {
       p.heat = Math.max(0, p.heat - (gun.coolRate ?? 0) * dt);

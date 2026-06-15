@@ -236,4 +236,34 @@ describe('weaponSystem', () => {
     run(sim, 60);
     expect(eventsOf(sim, 'shot').length).toBeGreaterThan(5);
   });
+
+  it('manual RELOAD is edge-triggered: 2 ticks in one frame emit exactly one reloadStart', async () => {
+    const sim = await makeSim();
+    const p = sim.addPlayer('A', 'spider', 0, false);
+    arm(sim, p, 'workhorse');
+    p.mag = 10; // partial mag, reloadable
+    // Hold RELOAD across two weaponSystem ticks WITHOUT clearing prevButtons between
+    // them (mirrors FixedLoop catch-up running tick() twice on one sampled input).
+    sim.setInput(p.id, input({ buttons: BTN.RELOAD }));
+    weaponSystem(sim, sim.dt);
+    weaponSystem(sim, sim.dt); // prevButtons NOT yet updated → still an "edge" by naive code
+    for (const q of sim.players.values()) q.prevButtons = q.input.buttons;
+    expect(eventsOf(sim, 'reloadStart').length).toBe(1);
+    expect(p.reloadT).toBeGreaterThan(0);
+  });
+
+  it('manual RELOAD is inert for full mags, heat guns, and mid-reload', async () => {
+    const sim = await makeSim();
+    const p = sim.addPlayer('A', 'spider', 0, false);
+    // Full mag → no reload
+    arm(sim, p, 'workhorse');
+    hold(sim, p.id, BTN.RELOAD);
+    tickWeapons(sim, 1);
+    expect(eventsOf(sim, 'reloadStart').length).toBe(0);
+    // Heat gun → no reload
+    arm(sim, p, 'ion');
+    hold(sim, p.id, BTN.RELOAD);
+    tickWeapons(sim, 1);
+    expect(eventsOf(sim, 'reloadStart').length).toBe(0);
+  });
 });
