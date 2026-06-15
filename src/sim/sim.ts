@@ -1,5 +1,5 @@
 import type RAPIER_NS from '@dimforge/rapier2d';
-import { dist, norm, segAABB, segCircle } from '../core/math';
+import { dist, normInto, segAABB, segCircle } from '../core/math';
 import { RNG } from '../core/rng';
 import { C } from '../data/constants';
 import { CLASSES, type ClassId } from '../data/classes';
@@ -43,6 +43,10 @@ export function initPhysics(): Promise<void> {
   })().catch((e) => { initPromise = null; throw e; });                     // reset for retry
   return initPromise;
 }
+
+// Module-scope scratch for normInto() at hot sim sites. Single-threaded sim;
+// each result is consumed immediately into locals before the next normInto call.
+const _n: [number, number] = [0, 0];
 
 export const GROUP_WALL = 0x0001;
 export const GROUP_BABO = 0x0002;
@@ -267,7 +271,8 @@ export class GameSim {
       this.emit({ t: 'hit', target: target.id, attacker, damage: dmg, x: target.x, y: target.y });
     }
     // Damage splatter scales with the hit
-    const [dx, dy] = atk ? norm(target.x - atk.x, target.y - atk.y) : [0, 0];
+    let dx = 0, dy = 0;
+    if (atk) { normInto(target.x - atk.x, target.y - atk.y, _n); dx = _n[0]; dy = _n[1]; }
     this.emit({ t: 'splat', x: target.x, y: target.y, size: 0.25 + dmg * 0.012, dirX: dx, dirY: dy });
     if (target.hp <= 0) this.kill(target, attacker, gun);
     return dmg;
@@ -298,7 +303,8 @@ export class GameSim {
       if (!other.alive || other.id === victim.id) continue;
       const d = dist(victim.x, victim.y, other.x, other.y);
       if (d < C.DEATH_POP_RADIUS) {
-        const [nx, ny] = norm(other.x - victim.x, other.y - victim.y);
+        normInto(other.x - victim.x, other.y - victim.y, _n);
+        const nx = _n[0], ny = _n[1];
         const falloff = 1 - d / C.DEATH_POP_RADIUS;
         this.applyImpulse(other, nx * C.DEATH_POP_IMPULSE * falloff, ny * C.DEATH_POP_IMPULSE * falloff);
       }
@@ -358,7 +364,8 @@ export class GameSim {
       if (d > radius + C.BABO_RADIUS) continue;
       if (this.raycastWalls(x, y, p.x, p.y) >= 0) continue; // wall shields
       const falloff = Math.max(0.25, 1 - d / radius);
-      const [nx, ny] = norm(p.x - x, p.y - y);
+      normInto(p.x - x, p.y - y, _n);
+      const nx = _n[0], ny = _n[1];
       this.applyImpulse(p, nx * impulse * falloff, ny * impulse * falloff);
       this.damage(p, owner, dmg * falloff, gun);
     }

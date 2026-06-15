@@ -39,6 +39,13 @@ export function norm(x: number, y: number): [number, number] {
   return [x / l, y / l];
 }
 
+/** Zero-alloc normalize into `out`. Returns `out`. Same float ops as norm(). */
+export function normInto(x: number, y: number, out: [number, number]): [number, number] {
+  const l = Math.hypot(x, y);
+  if (l < 1e-9) { out[0] = 0; out[1] = 0; return out; }
+  out[0] = x / l; out[1] = y / l; return out;
+}
+
 export function angleTo(ax: number, ay: number, bx: number, by: number): number {
   return Math.atan2(by - ay, bx - ax);
 }

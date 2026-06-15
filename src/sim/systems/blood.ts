@@ -1,6 +1,9 @@
-import { dist, norm } from '../../core/math';
+import { dist, normInto } from '../../core/math';
 import { C } from '../../data/constants';
 import type { GameSim } from '../sim';
+
+// Module-scope scratch for normInto(); consumed immediately (single-threaded sim).
+const _n: [number, number] = [0, 0];
 
 /**
  * Blood as terrain + fire zones.
@@ -55,7 +58,8 @@ export function bloodSystem(sim: GameSim, dt: number): void {
     p.dripT -= dt;
     if (p.dripT <= 0) {
       p.dripT = C.WOUNDED_DRIP_INTERVAL;
-      const [dx, dy] = norm(-p.vx, -p.vy); // trail behind movement; (0,0) if still
+      normInto(-p.vx, -p.vy, _n); // trail behind movement; (0,0) if still
+      const dx = _n[0], dy = _n[1];
       sim.emit({ t: 'splat', x: p.x, y: p.y, size: 0.18, dirX: dx, dirY: dy });
     }
   }
