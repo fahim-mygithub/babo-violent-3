@@ -1,11 +1,13 @@
-import { BoxGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide, Fog, HemisphereLight, Mesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
+import { BoxGeometry, BufferGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide, Float32BufferAttribute, Fog, HemisphereLight, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
 import { C } from '../data/constants';
 import { viewportSize, onViewportChange } from '../core/viewport';
+import { GUNS } from '../data/weapons';
 import type { MapDef } from '../data/maps';
 import type { GameEvent, ModeState, PlayerState } from '../sim/types';
 import type { BloodPool, FireZone, Grenade, Pickup, Projectile, SmokeZone } from '../sim/types';
 import { BaboPool } from './babos';
 import { EffectsLayer } from './effects';
+import { laserLength } from './aimLaser';
 import { QUALITY } from './quality';
 import { SplatMap } from './splatmap';
 import { makeFloorTexture, makeWallTexture } from './textures';
@@ -69,6 +71,15 @@ export class GameRenderer {
   private vw = 0;
   private vh = 0;
   private offViewport: (() => void) | null = null;
+
+  // Touch aim laser (S1.10) — cosmetic, local-only. One reused Line + reticle,
+  // built lazily on first activation so desktop never pays for it. setAimState
+  // (called each frame from the touch read-state) toggles + aims it.
+  private laser: Line | null = null;
+  private laserPos: Float32BufferAttribute | null = null;
+  private reticle: Mesh | null = null;
+  private aimActive = false;
+  private aimAngle = 0;
 
   constructor(container: HTMLElement, private map: MapDef) {
     this.canvas = document.createElement('canvas');
@@ -216,6 +227,57 @@ export class GameRenderer {
     this.shake = Math.min(0.8, this.shake + amount);
   }
 
+  /**
+   * Touch aim state (S1.10). The App pushes the touch read-state each frame: the
+   * laser draws from the muzzle along `aimAngle` only while `active`. Building the
+   * GL objects is deferred to first activation so the desktop path never allocates
+   * them and the laser is never drawn there.
+   */
+  setAimState(aimAngle: number, active: boolean): void {
+    this.aimAngle = aimAngle;
+    this.aimActive = active;
+    if (active && !this.laser) this.buildLaser();
+  }
+
+  private buildLaser(): void {
+    const geo = new BufferGeometry();
+    this.laserPos = new Float32BufferAttribute(new Float32Array(6), 3); // 2 verts
+    geo.setAttribute('position', this.laserPos);
+    this.laser = new Line(geo, new LineBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.7 }));
+    this.laser.frustumCulled = false;
+    this.laser.visible = false;
+    this.scene.add(this.laser);
+    this.reticle = new Mesh(
+      new RingGeometry(0.22, 0.34, 20),
+      new MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.85, side: DoubleSide }),
+    );
+    this.reticle.rotation.x = -Math.PI / 2;
+    this.reticle.visible = false;
+    this.scene.add(this.reticle);
+  }
+
+  /** Update the reused laser/reticle from the local babo. Honest wall occlusion. */
+  private updateLaser(local: PlayerState | undefined): void {
+    if (!this.laser || !this.laserPos || !this.reticle) return;
+    const show = this.aimActive && !!local && local.alive;
+    this.laser.visible = show;
+    this.reticle.visible = show;
+    if (!show || !local) return;
+    const dirX = Math.cos(this.aimAngle);
+    const dirY = Math.sin(this.aimAngle);
+    const mx = local.x + dirX * 0.65; // muzzle just ahead of the babo
+    const my = local.y + dirY * 0.65;
+    const maxLen = GUNS[local.gun].range;
+    const len = laserLength(mx, my, this.aimAngle, maxLen, this.map.walls);
+    const ex = mx + dirX * len;
+    const ey = my + dirY * len;
+    const arr = this.laserPos.array as Float32Array;
+    arr[0] = mx; arr[1] = 0.5; arr[2] = my;
+    arr[3] = ex; arr[4] = 0.5; arr[5] = ey;
+    this.laserPos.needsUpdate = true;
+    this.reticle.position.set(ex, 0.04, ey);
+  }
+
   render(view: WorldView, localId: number, dt: number): void {
     this.time += dt;
     this.shake = Math.max(0, this.shake - dt * 1.8);
@@ -246,6 +308,7 @@ export class GameRenderer {
       view.fires, view.smokes, view.pickups, view.mode, localId, this.time,
     );
     this.effects.update(dt);
+    this.updateLaser(local);
 
     this.splat.flush(this.renderer);
     this.renderer.render(this.scene, this.camera);
@@ -282,6 +345,14 @@ export class GameRenderer {
   dispose(): void {
     this.offViewport?.();
     this.offViewport = null;
+    if (this.laser) {
+      this.laser.geometry.dispose();
+      (this.laser.material as LineBasicMaterial).dispose();
+    }
+    if (this.reticle) {
+      this.reticle.geometry.dispose();
+      (this.reticle.material as MeshBasicMaterial).dispose();
+    }
     this.splat.dispose();
     this.babos.dispose();
     this.renderer.dispose();

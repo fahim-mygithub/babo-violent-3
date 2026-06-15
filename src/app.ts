@@ -567,6 +567,13 @@ export class App {
     const view = this.view();
     if (!view || !this.renderer || !this.hud || !this.fx) return;
     const local = this.localPlayer(view);
+    // Touch aim laser (S1.10): draw along the grenade arc while it's held, else
+    // the gun aim, only while the right stick / arc is active. Desktop leaves this
+    // untouched (no touch source → no laser ever).
+    if (this.touch) {
+      const arc = this.touch.grenadeArc;
+      this.renderer.setAimState(arc.active ? arc.aim : this.touch.aimAngle, arc.active || this.touch.aimActive);
+    }
     this.renderer.render(view, this.localId, frameDt);
     this.hud.update(view, this.localId, { x: this.kbm.mouseX, y: this.kbm.mouseY }, this.activeSource.showScores, frameDt);
     this.fx.update(local, frameDt);
