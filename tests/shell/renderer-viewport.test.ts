@@ -15,6 +15,11 @@ describe('renderer reads viewport bus, not window directly', () => {
     expect(span).toMatch(/this\.vw/);
     expect(span).toMatch(/this\.vh/);
   });
+  it('groundPoint reuses a private Vector3 (no per-call allocation)', () => {
+    const span = src.slice(src.indexOf('groundPoint('), src.indexOf('project('));
+    expect(span).not.toMatch(/new Vector3\(\)/); // hit vector is reused, not allocated
+    expect(span).toMatch(/this\.groundHit/);
+  });
   it('subscribes to onViewportChange and unsubscribes in dispose', () => {
     expect(src).toMatch(/onViewportChange/);
     expect(src).toMatch(/import .*viewportSize.*from ['"]\.\.\/core\/viewport['"]/);

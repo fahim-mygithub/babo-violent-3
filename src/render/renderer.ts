@@ -41,6 +41,7 @@ export class GameRenderer {
   private raycaster = new Raycaster();
   private ndc = new Vector2();
   private projVec = new Vector3();
+  private groundHit = new Vector3();
 
   // Cached viewport size (CSS px) — the unprojection denominator. groundPoint and
   // project MUST read these, not window.innerWidth/Height, so aim stays correct as
@@ -233,9 +234,8 @@ export class GameRenderer {
   groundPoint(clientX: number, clientY: number): { x: number; y: number } {
     this.ndc.set((clientX / this.vw) * 2 - 1, -(clientY / this.vh) * 2 + 1);
     this.raycaster.setFromCamera(this.ndc, this.camera);
-    const hit = new Vector3();
-    this.raycaster.ray.intersectPlane(this.groundPlane, hit);
-    return { x: hit.x, y: hit.z };
+    this.raycaster.ray.intersectPlane(this.groundPlane, this.groundHit);
+    return { x: this.groundHit.x, y: this.groundHit.z };
   }
 
   /** Sim world point → screen pixels (for HUD anchors). */
