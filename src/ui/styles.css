@@ -211,6 +211,19 @@ input.field:focus { border-color: var(--blood-bright); }
 .gun-ico { width: 42px; height: 18px; display: block; }
 .gun-name { font-weight: 600; }
 
+/* Inline tooltip (S6.5): on touch, the hover-only title="" role/identity is
+   redundant, so surface it as a tiny caption under the card/chip. Hidden on
+   desktop (>=761px) where the native title tooltip already covers hover. The
+   flex-basis:100% pushes it to its own line inside the inline-flex .gun-chip. */
+.tooltip-inline {
+  display: block;
+  flex-basis: 100%;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--dim);
+  margin-top: 3px;
+}
+
 .class-detail { margin-top: 12px; font-size: 13px; color: var(--dim); line-height: 1.5; min-height: 58px; }
 .class-detail b { color: var(--text); }
 .class-detail .ab { color: var(--gold); }
@@ -325,4 +338,11 @@ html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   .gun-chip { align-items: center; }
   input, select, textarea, input.field { font-size: 16px; }
   .class-card:active, .gun-chip:active, button.btn:active { transform: scale(0.97); }
+}
+
+/* ---------- desktop hover tooltips (S6.5) ----------
+   On desktop (>=761px) the native title="" tooltip covers hover, so the inline
+   captions are redundant — hide them. Touch (<=760px) keeps them visible. */
+@media (min-width: 761px) {
+  .tooltip-inline { display: none; }
 }
