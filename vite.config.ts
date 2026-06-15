@@ -16,6 +16,16 @@ export default defineConfig({
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 2200,
+    assetsInlineLimit: 0, // never base64-inline the Rapier .wasm — keep it a hashed, cacheable, deferred fetch
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three'],
+          peerjs: ['peerjs'],
+          rapier: ['@dimforge/rapier2d'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,
