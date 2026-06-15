@@ -1,4 +1,4 @@
-import { dist, normInto } from '../../core/math';
+import { dist, distSq, normInto } from '../../core/math';
 import { C } from '../../data/constants';
 import type { GameSim } from '../sim';
 
@@ -82,7 +82,8 @@ export function bloodSystem(sim: GameSim, dt: number): void {
     }
     let inFire = false;
     for (const f of sim.fires) {
-      if (dist(p.x, p.y, f.x, f.y) < f.r + C.BABO_RADIUS) {
+      const rr = f.r + C.BABO_RADIUS;
+      if (distSq(p.x, p.y, f.x, f.y) < rr * rr) {
         inFire = true;
         break;
       }
@@ -104,7 +105,8 @@ export function bloodSystem(sim: GameSim, dt: number): void {
     const f = sim.fires[i];
     for (let j = sim.pools.length - 1; j >= 0; j--) {
       const pool = sim.pools[j];
-      if (dist(f.x, f.y, pool.x, pool.y) < f.r + pool.r) {
+      const rr = f.r + pool.r;
+      if (distSq(f.x, f.y, pool.x, pool.y) < rr * rr) {
         sim.pools.splice(j, 1);
         sim.emit({ t: 'poolGone', id: pool.id });
         sim.spawnFire(pool.x, pool.y, pool.r);

@@ -3,9 +3,9 @@ import { C, FLAGS } from '../src/data/constants';
 import { makeSim, run, simHash } from './helpers';
 
 describe('inert sim-flag scaffolding (constants.ts)', () => {
-  it('exposes the flags with desktop-reproducing defaults', () => {
-    expect(C.PLAYER_CCD).toBe(true);        // matches sim.ts setCcdEnabled(true)
-    expect(C.SIM_BASELINE_V).toBe(1);
+  it('exposes the consumed sim-flag values (D-SHIFT baseline v2)', () => {
+    expect(C.PLAYER_CCD).toBe(false);       // D-SHIFT: CCD dropped, sim.ts setCcdEnabled(C.PLAYER_CCD)
+    expect(C.SIM_BASELINE_V).toBe(2);       // bumped once for the D-SHIFT re-baseline (Task 26)
     expect(C.MAX_PROJECTILES).toBe(256);
     expect(C.AUDIO_MAX_VOICES).toBe(24);
   });

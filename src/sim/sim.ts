@@ -1,5 +1,5 @@
 import type RAPIER_NS from '@dimforge/rapier2d';
-import { dist, normInto, segAABB, segCircle } from '../core/math';
+import { dist, distSq, normInto, segAABB, segCircle } from '../core/math';
 import { RNG } from '../core/rng';
 import { C } from '../data/constants';
 import { CLASSES, type ClassId } from '../data/classes';
@@ -153,7 +153,7 @@ export class GameSim {
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(0, 0)
         .setLinearDamping(cls.linearDamping)
-        .setCcdEnabled(true),
+        .setCcdEnabled(C.PLAYER_CCD),
     );
     this.world.createCollider(
       RAPIER.ColliderDesc.ball(C.BABO_RADIUS)
@@ -444,7 +444,7 @@ export class GameSim {
   playersInRadius(x: number, y: number, r: number): PlayerState[] {
     const out: PlayerState[] = [];
     for (const p of this.players.values()) {
-      if (p.alive && dist(x, y, p.x, p.y) <= r) out.push(p);
+      if (p.alive && distSq(x, y, p.x, p.y) <= r * r) out.push(p);
     }
     return out;
   }

@@ -69,9 +69,9 @@ export const C = {
 
   // --- Sim flag scaffolding (inert; consumed by later phases) -------------
   /** Per-babo continuous collision detection (sim.ts:139). false → drop CCD (S5.2a, D-SHIFT). */
-  PLAYER_CCD: true,
+  PLAYER_CCD: false, // babo per-tick displacement ≪ radius at 60Hz; CCD off saves mobile CPU
   /** D-SHIFT bundle version (distSq swaps + CCD). Bump re-baselines the golden hash (S5.1d/S5.8). */
-  SIM_BASELINE_V: 1,
+  SIM_BASELINE_V: 2,
   /** Per-tick projectile cap; grief/lag-spam guard, drops oldest BULLET only (S2.7). */
   MAX_PROJECTILES: 256,
   /** Global concurrent WebAudio voice ceiling (S5.7c). */
