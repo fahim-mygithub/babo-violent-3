@@ -1,7 +1,7 @@
 import { ALL_CLASS_IDS, CLASSES, type ClassId } from '../data/classes';
 import { ALL_GUN_IDS, GUNS, type GunId } from '../data/weapons';
 import type { ModeId, PlayerState } from '../sim/types';
-import { makeGunIcon } from '../render/gunModels';
+import { makeGunIcon } from '../render/gunIcons';
 
 /** One-line "how this chassis plays" blurb for the showcase panel. */
 const CLASS_TIPS: Record<ClassId, string> = {
