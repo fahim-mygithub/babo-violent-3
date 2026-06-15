@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { C } from '../src/data/constants';
+import { C, FLAGS } from '../src/data/constants';
 import type { GameSim } from '../src/sim/sim';
 import { projectileSystem } from '../src/sim/systems/projectiles';
 import type { PlayerState, Projectile, Team } from '../src/sim/types';
-import { makeSim, teleport } from './helpers';
+import { makeSim, teleport, tickCombat } from './helpers';
 
 // These tests drive projectileSystem directly (not sim.step()) so they depend
 // only on this system plus sim.ts helpers — sibling systems are in flux.
@@ -159,5 +159,25 @@ describe('projectileSystem', () => {
     tick(sim, 30);
     expect(victim.hp).toBe(C.MAX_HP);
     expect(sim.projectiles.length).toBe(0);
+  });
+});
+
+describe('S2 foundation (Task 56)', () => {
+  it('FLAGS.PROJECTILE_LANCE defaults OFF; MAX_PROJECTILES and LANCE_KNOCK are exposed', () => {
+    expect(FLAGS.PROJECTILE_LANCE).toBe(false);
+    expect(FLAGS.MAX_PROJECTILES).toBe(256);
+    expect(C.LANCE_KNOCK).toBe(10);
+  });
+
+  it('tickCombat runs weaponSystem then projectileSystem (self-check)', async () => {
+    const sim = await makeSim();
+    const p = addBabo(sim, 'A', 0, 0, -4);
+    p.gun = 'stinger';
+    p.mag = 30;
+    sim.setInput(p.id, { ...p.input, buttons: 1 /* BTN.FIRE */, aim: 0 });
+    tickCombat(sim, 1);
+    // A bullet was spawned by weaponSystem and advanced by projectileSystem.
+    expect(sim.events.some((e) => e.t === 'shot')).toBe(true);
+    expect(sim.projectiles.some((pr) => pr.x > 0.65)).toBe(true);
   });
 });

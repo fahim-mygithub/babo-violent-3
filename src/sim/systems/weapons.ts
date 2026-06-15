@@ -6,8 +6,6 @@ import type { GameSim } from '../sim';
 
 /** Distance from babo center to the muzzle along aim. */
 const MUZZLE_OFFSET = 0.65;
-/** Knockback impulse on a babo struck by the lance rail. */
-const LANCE_KNOCK = 10;
 /** Accumulated spread fully decays in this many seconds (rate = spreadMax / this). */
 const SPREAD_DECAY_TIME = 0.8;
 /** Released lance charge bleeds off this many times faster than it builds. */
@@ -200,7 +198,7 @@ function fireLance(sim: GameSim, p: PlayerState, gun: GunConfig): void {
   discharge(sim, p, gun);
   if (victim) {
     sim.damage(victim, p.id, gun.damage, gun.id);
-    sim.applyImpulse(victim, dx * LANCE_KNOCK, dy * LANCE_KNOCK);
+    sim.applyImpulse(victim, dx * C.LANCE_KNOCK, dy * C.LANCE_KNOCK);
   }
   sim.emit({ t: 'rail', x0, y0, x1: x0 + (ex - x0) * bestT, y1: y0 + (ey - y0) * bestT, owner: p.id });
   sim.emit({ t: 'shot', player: p.id, gun: gun.id, x: x0, y: y0, aim });

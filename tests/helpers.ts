@@ -1,6 +1,8 @@
 import { GameSim, initPhysics } from '../src/sim/sim';
 import type { SimOptions, PlayerInput, FlagState } from '../src/sim/types';
 import { BTN, emptyInput } from '../src/sim/types';
+import { weaponSystem } from '../src/sim/systems/weapons';
+import { projectileSystem } from '../src/sim/systems/projectiles';
 
 export { BTN, emptyInput };
 
@@ -13,6 +15,19 @@ export async function makeSim(opts?: Partial<SimOptions>): Promise<GameSim> {
 /** Run n fixed steps. */
 export function run(sim: GameSim, n: number): void {
   for (let i = 0; i < n; i++) sim.step();
+}
+
+/**
+ * Run the combat slice of the step pipeline: weaponSystem THEN projectileSystem,
+ * mirroring sim.step()'s order (sim.ts:197-198). Replicates prevButtons
+ * bookkeeping so edge-triggered fire/reload behaves like the full loop.
+ */
+export function tickCombat(sim: GameSim, n = 1): void {
+  for (let i = 0; i < n; i++) {
+    weaponSystem(sim, sim.dt);
+    projectileSystem(sim, sim.dt);
+    for (const p of sim.players.values()) p.prevButtons = p.input.buttons;
+  }
 }
 
 /** Convenience: run until predicate or maxTicks. Returns ticks elapsed or -1. */

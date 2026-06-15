@@ -63,6 +63,8 @@ export const C = {
   WALL_HEIGHT: 1.6,         // visual wall height (grenades arc over)
   MOVE_FORCE_SCALE: 1.0,
   PROJECTILE_MAX_DIST: 40,
+  /** Knockback impulse on a babo struck by the lance rail (hitscan + projectile). */
+  LANCE_KNOCK: 10,
 
   // Bots
   BOT_NAMES: ['Crusher', 'Gibs', 'Rolo', 'Hemo', 'Splat', 'Maul', 'Vex', 'Plasma', 'Tank', 'Drip'],
