@@ -9,6 +9,8 @@ import type { WorldView } from '../render/renderer';
  */
 export class AudioEngine {
   enabled = true;
+  /** Set once the first user gesture has unlocked WebAudio (so repeat gestures no-op). */
+  unlocked = false;
 
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -17,10 +19,18 @@ export class AudioEngine {
   private heartPhase = 0;
   private sizzleAt = 0;
 
-  /** Call from a user gesture to unlock the AudioContext. */
-  resume(): void {
+  /**
+   * Call from the FIRST user gesture to unlock WebAudio (iOS Safari requires a
+   * silent buffer played inside the gesture). Idempotent via `unlocked` so a tap
+   * firing both pointerdown+touchend doesn't double-kick the context.
+   */
+  unlock(): void {
+    if (this.unlocked) return;
     if (!this.ctx) {
-      this.ctx = new AudioContext();
+      // iOS Safari (and older WebKit) only expose webkitAudioContext.
+      const Ctx = (typeof window !== 'undefined' && (window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)) as typeof AudioContext | undefined;
+      if (!Ctx) return; // no WebAudio (jsdom without a stub) — stay silent, never throw
+      this.ctx = new Ctx();
       const comp = this.ctx.createDynamicsCompressor();
       comp.threshold.value = -18;
       comp.ratio.value = 6;
@@ -34,7 +44,26 @@ export class AudioEngine {
       const data = this.noiseBuf.getChannelData(0);
       for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    // A silent 1-sample buffer played inside the gesture is what actually unlocks
+    // iOS WebAudio — resume() alone is not enough on Safari.
+    const s = this.ctx.createBufferSource();
+    s.buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+    s.connect(this.ctx.destination);
+    s.start(0);
+    s.stop(this.ctx.currentTime + 0.001);
+    // 'interrupted' (iOS phone call / Siri) and 'suspended' both need a resume.
+    if (this.ctx.state !== 'running') void this.ctx.resume();
+    this.unlocked = true;
+  }
+
+  /** Re-arm audio after the tab returns to the foreground (visibilitychange). */
+  resumeIfUnlocked(): void {
+    if (this.unlocked && this.ctx && this.ctx.state !== 'running') void this.ctx.resume();
+  }
+
+  /** Suspend ONLY the AudioContext when the tab is hidden (the sim loop keeps ticking). */
+  suspend(): void {
+    if (this.ctx && this.ctx.state === 'running') void this.ctx.suspend();
   }
 
   // -------------------------------------------------------------------------

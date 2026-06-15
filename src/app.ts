@@ -71,7 +71,15 @@ export class App {
     this.gunId = storedGun && ALL_GUN_IDS.includes(storedGun) ? storedGun : STARTER_GUN;
     this.input.enabled = false;
     window.addEventListener('keydown', this.onGlobalKey);
-    window.addEventListener('pointerdown', () => this.audio.resume(), { once: true });
+    // Broaden the unlock gesture set for iOS (pointerdown+touchend can both fire
+    // from one tap) and de-register ALL of them on the first success so the
+    // `unlocked` flag isn't relied on alone.
+    const unlockEvents = ['pointerdown', 'touchend', 'keydown'] as const;
+    const unlock = (): void => {
+      this.audio.unlock();
+      for (const ev of unlockEvents) window.removeEventListener(ev, unlock);
+    };
+    for (const ev of unlockEvents) window.addEventListener(ev, unlock);
   }
 
   start(): void {
