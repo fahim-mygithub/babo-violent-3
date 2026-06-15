@@ -18,6 +18,9 @@ const IMPORT_RE = /(?:from|import)\s*\(?\s*['"]([^'"]+)['"]\)?/g;
 
 /** Allowed import specifiers for a file inside src/sim/**. */
 function allowed(spec: string): boolean {
+  // data/runtime is render/input/net/shell scope only — never readable from sim.
+  // Must precede the data/* allow below so it isn't swept in.
+  if (/data\/runtime/.test(spec)) return false;
   if (spec.startsWith('@dimforge/rapier2d')) return true;       // physics engine
   if (/(^|\/)core(\/|$)/.test(spec) && spec.startsWith('.')) return true; // ../core, ./core
   if (/(^|\/)data(\/|$)/.test(spec) && spec.startsWith('.')) return true; // ../data, ./data
@@ -27,6 +30,22 @@ function allowed(spec: string): boolean {
 }
 
 const BANNED = /three|peerjs|\/render\/|\/audio\/|\/net\/|\/input|\/app|\/ui\//;
+
+describe('sim purity allowlist contract', () => {
+  it('bans src/sim from importing the render-scoped data/runtime config', () => {
+    // runtime.ts is render/input/net/shell scope only; the sim must never read it.
+    expect(allowed('../data/runtime')).toBe(false);
+    expect(allowed('./data/runtime')).toBe(false);
+  });
+
+  it('still allows legitimate sim data imports', () => {
+    expect(allowed('../data/constants')).toBe(true);
+    expect(allowed('../data/classes')).toBe(true);
+    expect(allowed('../core/math')).toBe(true);
+    expect(allowed('@dimforge/rapier2d-compat')).toBe(true);
+    expect(allowed('./systems/movement')).toBe(true);
+  });
+});
 
 describe('sim purity (static import guard)', () => {
   const files = walk(SIM_DIR);
