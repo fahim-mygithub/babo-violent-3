@@ -1,5 +1,6 @@
 import { C } from '../data/constants';
 import { viewportSize, onViewportChange } from '../core/viewport';
+import { canvasBackingScale } from './quality';
 import type { GameEvent, PlayerState } from '../sim/types';
 import type { WorldView } from './renderer';
 
@@ -42,7 +43,8 @@ export class ScreenFx {
 
   private resize(): void {
     const { w, h } = viewportSize();
-    const dpr = Math.min(window.devicePixelRatio, 2);
+    // 1x backing store on desktop (byte-identical to main); DPR-scaled on mobile.
+    const dpr = canvasBackingScale();
     this.cssW = w;
     this.cssH = h;
     this.canvas.width = Math.round(w * dpr);

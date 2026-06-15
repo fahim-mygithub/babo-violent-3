@@ -1,9 +1,16 @@
+import { QUALITY } from '../render/quality';
+
 export interface ViewportSize { w: number; h: number; }
 
-/** Prefer visualViewport (iOS URL-bar aware); fall back to innerWidth/Height. */
+/**
+ * On mobile, prefer visualViewport (iOS URL-bar aware) so aim/HUD track the
+ * shrinking viewport as the URL bar slides. On desktop, use innerWidth/innerHeight
+ * — visualViewport differs there with a scrollbar / pinch-zoom, which would shift
+ * the aim unprojection; innerWidth/Height keeps desktop byte-identical with main.
+ */
 export function viewportSize(): ViewportSize {
   const vv = window.visualViewport;
-  if (vv) return { w: vv.width, h: vv.height };
+  if (vv && QUALITY.isMobile) return { w: vv.width, h: vv.height };
   return { w: window.innerWidth, h: window.innerHeight };
 }
 

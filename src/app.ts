@@ -539,7 +539,11 @@ export class App {
     applyTouchCam();
     this.viewportUnsub = onViewportChange(applyTouchCam);
 
-    this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, this.role === 'host');
+    // Keep ticking while hidden for the AUTHORITATIVE roles — host AND local
+    // singleplayer (which owns its own sim, like main did). Only a true CLIENT
+    // pauses-and-resyncs on hide (it has no sim; it mirrors the host's snapshots).
+    const keepAliveWhenHidden = this.role !== 'client';
+    this.loop = new FixedLoop(C.SIM_HZ, () => this.tick(), (_alpha, frameDt) => this.frame(frameDt), 5, keepAliveWhenHidden);
     this.loop.start();
     void this.acquireWakeLock();
 

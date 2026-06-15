@@ -4,6 +4,7 @@ import { CLASSES } from '../data/classes';
 import type { GunId } from '../data/weapons';
 import type { PlayerState } from '../sim/types';
 import { makeBaboMaterial } from './baboShader';
+import { QUALITY } from './quality';
 import { buildGunModel, disposeGunModel, disposeGunCache } from './gunModels';
 import { buildClassVisual, disposeClassVisual, disposeClassCache, type ClassVisual } from './baboShapes';
 
@@ -272,12 +273,17 @@ export class BaboPool {
       // Phase Shift fades the body shader; fade the held gun to match so it
       // doesn't float opaque beside a ghost body. Toggle only on transition.
       if (p.phaseActive !== vis.phased) {
-        // Flip the (otherwise opaque) body's transparency only at the phase edge —
-        // true on phase-in so uOpacity 0.32 actually blends, false on phase-out so
-        // the body is back on the cheap opaque path. The per-frame uOpacity write
-        // at :207 stays unconditional.
-        const t = phaseTransition(p.phaseActive, vis.phased);
-        if (t !== null) { vis.mat.transparent = t; vis.mat.needsUpdate = true; }
+        // On the mobile tiers the body is opaque by default, so flip its
+        // transparency at the phase edge — true on phase-in so uOpacity 0.32 blends,
+        // false on phase-out so it's back on the cheap opaque path. On HIGH the body
+        // is transparent-by-default (parity with main); never flip it opaque there,
+        // keeping the desktop render-pass ordering byte-identical. Toggling
+        // transparent/opacity needs no shader recompile, so no needsUpdate. The
+        // per-frame uOpacity write above stays unconditional.
+        if (QUALITY.baboBodyTransparent === false) {
+          const t = phaseTransition(p.phaseActive, vis.phased);
+          if (t !== null) vis.mat.transparent = t;
+        }
         vis.phased = p.phaseActive;
         setGroupOpacity(vis.gun, p.phaseActive ? 0.32 : 1);
       }

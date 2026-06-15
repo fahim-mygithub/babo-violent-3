@@ -34,7 +34,9 @@ export interface QualityProfile {
   smokeSprites: number;
   /** Mount the live animated lobby preview (false on low → static icon fallback). */
   lobbyPreview: boolean;
-  /** Construct the babo body material transparent (all tiers — phase gating flips it). */
+  /** Construct the babo body material transparent. TRUE on high (desktop
+   *  render-pass byte-identity with main); FALSE on mobile tiers (opaque-by-default
+   *  is the perf win — phase gating still flips it transparent while a phase is active). */
   baboBodyTransparent: boolean;
 }
 
@@ -66,13 +68,13 @@ const FIELDS: Record<Tier, Omit<QualityProfile, 'tier' | 'isMobile'>> = {
     maxPixelRatio: 1.25, antialias: false,
     downgradeMaterials: true, mergeStatics: true, splatRtSize: 1024,
     particleScale: 0.65, particleCap: 350, fireSprites: 5, smokeSprites: 4,
-    lobbyPreview: true, baboBodyTransparent: true,
+    lobbyPreview: true, baboBodyTransparent: false,
   },
   low: {
     maxPixelRatio: 1, antialias: false,
     downgradeMaterials: true, mergeStatics: true, splatRtSize: 1024,
     particleScale: 0.4, particleCap: 200, fireSprites: 3, smokeSprites: 3,
-    lobbyPreview: false, baboBodyTransparent: true,
+    lobbyPreview: false, baboBodyTransparent: false,
   },
 };
 
@@ -90,6 +92,18 @@ export const QUALITY: QualityProfile = detectQuality();
 /** Mutate the singleton in place so live imports keep the same reference. */
 export function setTierOverride(tier: Tier): void {
   Object.assign(QUALITY, { tier, isMobile: tier !== 'high', ...FIELDS[tier] });
+}
+
+/**
+ * Device-pixel-ratio backing-store scale for the 2D overlay canvases (HUD,
+ * screen-fx). 1x on desktop (high) so HiDPI desktops render byte-identically to
+ * main; min(devicePixelRatio, 2) on the mobile tiers, where the crisp scaled
+ * backing store is the win and the cost is acceptable.
+ */
+export function canvasBackingScale(): number {
+  if (!QUALITY.isMobile) return 1;
+  const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+  return Math.min(dpr, 2);
 }
 
 /** Whether to mount the live animated lobby preview (false on low → static icon). */

@@ -61,6 +61,13 @@ describe('App wiring (source assertion)', () => {
     expect(src).toMatch(/classList\.(toggle|add)\(['"]touch-mode/);
     expect(src).toMatch(/shouldUseTouch\(\)/);
   });
+
+  it('keeps the loop alive while hidden for host AND local (only a true client pauses)', () => {
+    // Authoritative roles (host + local singleplayer) keep ticking when hidden,
+    // like main; a true client (no local sim) pauses-and-resyncs.
+    expect(src).toMatch(/keepAliveWhenHidden\s*=\s*this\.role\s*!==\s*['"]client['"]/);
+    expect(src).not.toMatch(/new FixedLoop\([^)]*this\.role === 'host'\)/);
+  });
 });
 
 // DESKTOP non-regression (S8.4): with no coarse pointer / no override, the App

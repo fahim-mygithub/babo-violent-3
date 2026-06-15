@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { viewportSize, onViewportChange } from '../../src/core/viewport';
+import { setTierOverride } from '../../src/render/quality';
+
+afterEach(() => setTierOverride('high'));
 
 describe('viewport bus', () => {
   it('viewportSize falls back to innerWidth/Height when visualViewport is absent', () => {
@@ -10,9 +13,18 @@ describe('viewport bus', () => {
     expect(viewportSize()).toEqual({ w: 412, h: 915 });
   });
 
-  it('prefers visualViewport dimensions when present', () => {
+  it('prefers visualViewport dimensions on mobile (URL-bar aware)', () => {
+    setTierOverride('mid'); // isMobile = true → visualViewport wins
     (window as any).visualViewport = { width: 390, height: 700, addEventListener() {}, removeEventListener() {} };
     expect(viewportSize()).toEqual({ w: 390, h: 700 });
+  });
+
+  it('ignores visualViewport on desktop, using innerWidth/Height (byte-identical aim)', () => {
+    setTierOverride('high'); // isMobile = false → innerWidth/Height, not visualViewport
+    (window as any).visualViewport = { width: 390, height: 700, addEventListener() {}, removeEventListener() {} };
+    (window as any).innerWidth = 1600;
+    (window as any).innerHeight = 900;
+    expect(viewportSize()).toEqual({ w: 1600, h: 900 });
   });
 
   it('onViewportChange returns an unsubscribe and fires the callback on resize (rAF-coalesced)', async () => {
