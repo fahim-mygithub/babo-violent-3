@@ -1,5 +1,6 @@
 import { BoxGeometry, CircleGeometry, Color, DirectionalLight, DoubleSide, Fog, HemisphereLight, Mesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera, Plane, PlaneGeometry, Raycaster, RingGeometry, Scene, Vector2, Vector3, WebGLRenderer } from 'three';
 import { C } from '../data/constants';
+import { viewportSize, onViewportChange } from '../core/viewport';
 import type { MapDef } from '../data/maps';
 import type { GameEvent, ModeState, PlayerState } from '../sim/types';
 import type { BloodPool, FireZone, Grenade, Pickup, Projectile, SmokeZone } from '../sim/types';
@@ -40,19 +41,27 @@ export class GameRenderer {
   private ndc = new Vector2();
   private projVec = new Vector3();
 
+  // Cached viewport size (CSS px) — the unprojection denominator. groundPoint and
+  // project MUST read these, not window.innerWidth/Height, so aim stays correct as
+  // the iOS URL bar slides. On a stable desktop viewport these equal innerWidth/Height.
+  private vw = 0;
+  private vh = 0;
+  private offViewport: (() => void) | null = null;
+
   constructor(container: HTMLElement, private map: MapDef) {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'game-canvas';
     container.appendChild(this.canvas);
     this.renderer = new WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    window.addEventListener('resize', this.onResize);
 
     this.scene.background = new Color(0x0b0c10);
     this.scene.fog = new Fog(0x0b0c10, 55, 95);
 
-    this.camera = new PerspectiveCamera(46, window.innerWidth / window.innerHeight, 0.5, 200);
+    const { w: vw0, h: vh0 } = viewportSize();
+    this.camera = new PerspectiveCamera(46, vw0 / vh0, 0.5, 200);
+    this.applyViewport();
+    this.offViewport = onViewportChange(this.applyViewport);
 
     this.scene.add(new HemisphereLight(0xcdd6e8, 0x3a3430, 1.5));
     const key = new DirectionalLight(0xfff2e0, 2.4);
@@ -221,7 +230,7 @@ export class GameRenderer {
 
   /** Mouse position → sim ground coordinates. */
   groundPoint(clientX: number, clientY: number): { x: number; y: number } {
-    this.ndc.set((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
+    this.ndc.set((clientX / this.vw) * 2 - 1, -(clientY / this.vh) * 2 + 1);
     this.raycaster.setFromCamera(this.ndc, this.camera);
     const hit = new Vector3();
     this.raycaster.ray.intersectPlane(this.groundPlane, hit);
@@ -232,20 +241,25 @@ export class GameRenderer {
   project(x: number, y: number, height = 0): { x: number; y: number; visible: boolean } {
     this.projVec.set(x, height, y).project(this.camera);
     return {
-      x: (this.projVec.x * 0.5 + 0.5) * window.innerWidth,
-      y: (-this.projVec.y * 0.5 + 0.5) * window.innerHeight,
+      x: (this.projVec.x * 0.5 + 0.5) * this.vw,
+      y: (-this.projVec.y * 0.5 + 0.5) * this.vh,
       visible: this.projVec.z < 1,
     };
   }
 
-  private onResize = (): void => {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+  /** Re-cache size + resize camera/renderer from the viewport bus (one rAF-coalesced fire). */
+  private applyViewport = (): void => {
+    const { w, h } = viewportSize();
+    this.vw = w;
+    this.vh = h;
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(w, h, false);
   };
 
   dispose(): void {
-    window.removeEventListener('resize', this.onResize);
+    this.offViewport?.();
+    this.offViewport = null;
     this.splat.dispose();
     this.babos.dispose();
     this.renderer.dispose();
