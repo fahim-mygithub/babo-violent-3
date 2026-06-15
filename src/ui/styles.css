@@ -268,3 +268,13 @@ input.field:focus { border-color: var(--blood-bright); }
 .howto h4 { color: var(--blood-bright); margin: 14px 0 4px; letter-spacing: 1px; }
 
 .footnote { position: absolute; bottom: 16px; color: var(--dim); font-size: 11.5px; letter-spacing: 1px; }
+
+/* ---------- mobile play-surface gesture suppression ----------
+   Scoped to the play surfaces ONLY (canvases + touch layer). The .screen scroll
+   containers keep touch-action:auto so menus/lobby still scroll and tap. */
+html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+#game-canvas, #hud-canvas, #fx-canvas, #touch-layer {
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
