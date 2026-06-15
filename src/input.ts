@@ -79,6 +79,7 @@ export class InputManager {
       if (this.mouseButtons & 4) buttons |= BTN.THROW;
       if (this.keys.has('Space')) buttons |= BTN.ABILITY;
       if (this.keys.has('KeyE')) buttons |= BTN.PICKUP;
+      if (this.keys.has('KeyR')) buttons |= BTN.RELOAD;
     }
     return {
       mx, my,
